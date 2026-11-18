@@ -1,11 +1,17 @@
 use serde_json::{Value, json};
 use slint::ComponentHandle;
-use std::{env, io::{BufRead, BufReader, Write}, os::unix::net::UnixStream, path::PathBuf, time::Duration};
+use std::{env, io::{BufRead, BufReader, Write}, os::unix::net::UnixStream, path::PathBuf, process::Command, thread, time::Duration};
 
 slint::include_modules!();
 
 fn socket_path() -> PathBuf {
-    env::args().skip(1).find_map(|arg| arg.strip_prefix("--socket=").map(PathBuf::from))
+    let mut args = env::args().skip(1);
+    let mut explicit = None;
+    while let Some(arg) = args.next() {
+        if let Some(path) = arg.strip_prefix("--socket=") { explicit = Some(PathBuf::from(path)); break; }
+        if arg == "--socket" { explicit = args.next().map(PathBuf::from); break; }
+    }
+    explicit
         .or_else(|| env::var_os("KBOTS_SOCKET").map(PathBuf::from))
         .or_else(|| env::var_os("XDG_RUNTIME_DIR").map(|p| PathBuf::from(p).join("kbots.sock")))
         .or_else(|| env::var_os("HOME").map(|p| PathBuf::from(p).join(".local/run/kbots.sock")))
@@ -68,6 +74,35 @@ fn main() -> Result<(), slint::PlatformError> {
         let path = ui.get_project_path().trim().to_string(); let name = ui.get_project_name().trim().to_string();
         if path.is_empty() { ui.set_output("Enter an existing project directory.".into()); return; }
         display_result(&ui, rpc("projects.register", json!({"path":path,"name":name,"botRoles":["ceo","git","ops"]})));
+    });
+    let weak = ui.as_weak();
+    ui.on_configure_project(move || if let Some(ui) = weak.upgrade() {
+        let path = ui.get_project_path().trim().to_string();
+        if path.is_empty() { ui.set_output("Enter the project directory to configure.".into()); return; }
+        let weak = ui.as_weak();
+        thread::spawn(move || {
+            let result = Command::new("kbots").args(["project", "configure", &path]).output();
+            let message = match result {
+                Ok(output) => format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr)),
+                Err(error) => format!("Could not run kbots project configure: {error}"),
+            };
+            let _ = weak.upgrade_in_event_loop(move |ui| ui.set_output(message.into()));
+        });
+    });
+    let weak = ui.as_weak();
+    ui.on_start_sessions(move || if let Some(ui) = weak.upgrade() {
+        let path = ui.get_project_path().trim().to_string();
+        if path.is_empty() { ui.set_output("Enter the project directory to start its bot sessions.".into()); return; }
+        let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src/backend/cli/start-sessions.ts");
+        let weak = ui.as_weak();
+        thread::spawn(move || {
+            let result = Command::new("bun").arg("run").arg(script).args(["--directory", &path]).output();
+            let message = match result {
+                Ok(output) => format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr)),
+                Err(error) => format!("Could not start bot sessions: {error}"),
+            };
+            let _ = weak.upgrade_in_event_loop(move |ui| ui.set_output(message.into()));
+        });
     });
     let weak = ui.as_weak();
     ui.on_load_agents(move || if let Some(ui) = weak.upgrade() { display_result(&ui, rpc("agents.list", json!({}))); });

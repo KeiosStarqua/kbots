@@ -46,6 +46,12 @@ Initial CLI methods:
 | `project show ID` | `projects.get` | `projectId` |
 | `approve ID` | `approvals.approve` | `approvalId` |
 
+The desktop GUI also requests `approvals.list` and `events.list` (with an
+optional `limit`) to populate the approvals and activity views. These read
+methods should return an `items` array in `result`. The daemon executable is
+not implemented yet, so GUI operations report a connection or method error
+until a compatible daemon is running.
+
 For `projects.register`, the CLI first canonicalizes the existing directory,
 creates missing `.agents/bot/{ceo,git,ops}` folders and starter `AGENTS.md`
 files, and generates the initial manifest/configs only when no per-bot

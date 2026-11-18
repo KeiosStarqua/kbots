@@ -20,7 +20,7 @@ export component MainWindow inherits Window {
     in-out property <string> item-id;
 
     callback refresh(); callback load-tasks(); callback create-task(); callback cancel-task();
-    callback load-projects(); callback register-project(); callback load-agents();
+    callback load-projects(); callback register-project(); callback configure-project(); callback start-sessions(); callback load-agents();
     callback load-approvals(); callback approve(); callback load-activity(); callback show-item();
 
     VerticalLayout {
@@ -73,6 +73,8 @@ export component MainWindow inherits Window {
                         LineEdit { placeholder-text: "Display name (optional)"; text <=> root.project-name; }
                         HorizontalLayout { spacing: 8px;
                             Button { text: "Register project"; clicked => { root.register-project(); } }
+                            Button { text: "Configure bot files"; clicked => { root.configure-project(); } }
+                            Button { text: "Start bot sessions"; clicked => { root.start-sessions(); } }
                             Button { text: "List projects"; clicked => { root.load-projects(); } }
                             LineEdit { placeholder-text: "Project ID"; text <=> root.item-id; }
                             Button { text: "Show project"; clicked => { root.show-item(); } }
