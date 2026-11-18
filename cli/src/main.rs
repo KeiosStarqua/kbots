@@ -1,6 +1,7 @@
 use std::{
     env,
     error::Error,
+    fs,
     io::{self, BufRead, BufReader, Write},
     path::PathBuf,
     process::{self, Command},
@@ -38,6 +39,11 @@ enum Commands {
     Agents {
         #[command(subcommand)]
         command: AgentCommands,
+    },
+    /// Register and inspect local projects.
+    Project {
+        #[command(subcommand)]
+        command: ProjectCommands,
     },
     /// Approve a pending protected operation.
     Approve {
@@ -77,6 +83,22 @@ enum AgentCommands {
     List,
 }
 
+#[derive(Debug, Subcommand)]
+enum ProjectCommands {
+    /// Register a local project (defaults to the current directory).
+    Add {
+        /// Existing project directory.
+        path: Option<PathBuf>,
+        /// Display name; defaults to the directory name.
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// List registered projects.
+    List,
+    /// Show a registered project by ID.
+    Show { project_id: String },
+}
+
 fn main() {
     if let Err(error) = run(Cli::parse()) {
         eprintln!("kbots: {error}");
@@ -89,7 +111,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
         Commands::Gui => run_ui("KBOTS_GUI_BIN", "kbots-gui"),
         Commands::Tui => run_ui("KBOTS_TUI_BIN", "kbots-tui"),
         command => {
-            let (method, params) = rpc_call(command);
+            let (method, params) = rpc_call(command)?;
             let socket = socket_path(cli.socket);
             let response = request(&socket, method, params)?;
             println!("{}", serde_json::to_string_pretty(&response)?);
@@ -98,8 +120,8 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn rpc_call(command: Commands) -> (&'static str, Value) {
-    match command {
+fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> {
+    let request = match command {
         Commands::Status => ("system.status", json!({})),
         Commands::Tasks { command } => match command {
             TaskCommands::Add { title, project } => (
@@ -113,11 +135,67 @@ fn rpc_call(command: Commands) -> (&'static str, Value) {
         Commands::Agents {
             command: AgentCommands::List,
         } => ("agents.list", json!({})),
+        Commands::Project { command } => match command {
+            ProjectCommands::Add { path, name } => {
+                ("projects.register", register_project(path, name)?)
+            }
+            ProjectCommands::List => ("projects.list", json!({})),
+            ProjectCommands::Show { project_id } => {
+                ("projects.get", json!({ "projectId": project_id }))
+            }
+        },
         Commands::Approve { approval_id } => {
             ("approvals.approve", json!({ "approvalId": approval_id }))
         }
         Commands::Gui | Commands::Tui => unreachable!("UI commands are handled before RPC"),
+    };
+    Ok(request)
+}
+
+fn register_project(path: Option<PathBuf>, name: Option<String>) -> Result<Value, Box<dyn Error>> {
+    let requested_path = path.unwrap_or(env::current_dir()?);
+    let project_path = fs::canonicalize(&requested_path)?;
+    if !project_path.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "project path is not a directory: {}",
+                project_path.display()
+            ),
+        )
+        .into());
     }
+
+    let project_name = match name {
+        Some(name) if !name.trim().is_empty() => name.trim().to_owned(),
+        Some(_) => {
+            return Err(
+                io::Error::new(io::ErrorKind::InvalidInput, "--name cannot be empty").into(),
+            );
+        }
+        None => project_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_else(|| project_path.to_str().unwrap_or("project"))
+            .to_owned(),
+    };
+    let path = project_path.to_str().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "project path cannot be represented as UTF-8",
+        )
+    })?;
+
+    let bot_root = project_path.join(".agents").join("bot");
+    for role in ["ceo", "git", "ops"] {
+        fs::create_dir_all(bot_root.join(role))?;
+    }
+
+    Ok(json!({
+        "path": path,
+        "name": project_name,
+        "botRoles": ["ceo", "git", "ops"],
+    }))
 }
 
 fn socket_path(override_path: Option<PathBuf>) -> PathBuf {

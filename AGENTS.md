@@ -31,6 +31,9 @@
   orchestration when Effect fits the operation.
 - Use `@opencode/sdk` for an embedded OpenCode host and `@opencode/client` for the registered
   laptop service.
+- Every registered project uses `.agents/bot/{ceo,git,ops}`. `kbots project add`
+  creates any missing role directories without overwriting or copying
+  project-specific bot instructions, OpenCode configs, plugins, or local state.
 - Read saved provider connections through OpenCode; never print credential values or auth headers.
 - Session commands default to `KIR_AUTO_DIRECTORY` or the sibling film-production checkout.
 - Prompting and interrupting sessions are explicit actions. Do not delete sessions.

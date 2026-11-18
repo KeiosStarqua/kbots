@@ -52,9 +52,24 @@ cargo run --manifest-path tui/control-center/Cargo.toml
 ```
 
 The TUI demo adapts to narrow terminal widths and uses arrow keys or `h`/`j`/`k`/`l`
-to navigate, `1`–`6` to jump to a section, and `q` or `Esc` to exit. The CLI can launch either UI and defines
-automation commands for status, tasks, agents, and approvals. Until the daemon
-is implemented, those API commands return a clear socket connection error.
+to navigate, `1`–`6` to jump to a section, and `q` or `Esc` to exit. The CLI can
+launch either UI and defines automation commands for status, tasks, projects,
+agents, and approvals. Until the daemon is implemented, those API commands
+return a clear socket connection error.
+
+Register each local project (or run `kbots project add` from inside its root):
+
+```sh
+kbots project add /home/keios/repos/mein/kt-system
+kbots project add /home/keios/repos/mein/nsac --name NSAC
+kbots project list
+kbots project show <project-id>
+```
+
+Registration canonicalizes the project path and creates the shared bot-role
+folders `.agents/bot/ceo`, `.agents/bot/git`, and `.agents/bot/ops` if missing.
+It leaves existing instructions and project-specific OpenCode configuration
+untouched. Registry persistence still requires the Bun daemon.
 
 See [`gui/README.md`](gui/README.md) and [`tui/README.md`](tui/README.md) for
 the clients and planned IPC boundary, and
