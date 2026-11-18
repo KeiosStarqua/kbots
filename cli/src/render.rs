@@ -32,6 +32,7 @@ pub fn render(method: &str, value: &Value) -> Option<String> {
         "watchers.set" => Some(render_watcher_set(value)),
         "internal.sessions.start" => Some(render_sessions_start(value)),
         "internal.project.configure" => Some(render_project_configure(value)),
+        "internal.project.sync" => Some(render_project_sync(value)),
         _ => None,
     }
 }
@@ -886,6 +887,30 @@ fn render_sessions_start(value: &Value) -> String {
         lines.push("No sessions started.".to_owned());
     }
     lines.join("\n")
+}
+
+fn render_project_sync(value: &Value) -> String {
+    let format_list = |key: &str| {
+        value
+            .get(key)
+            .and_then(Value::as_array)
+            .map(|entries| {
+                let items: Vec<&str> = entries.iter().filter_map(Value::as_str).collect();
+                if items.is_empty() {
+                    "-".to_owned()
+                } else {
+                    items.join(", ")
+                }
+            })
+            .unwrap_or_else(|| "-".to_owned())
+    };
+    detail(&[
+        ("created", format_list("created")),
+        ("updated", format_list("updated")),
+        ("current", format_list("current")),
+        ("kept", format_list("kept")),
+        ("backups", format_list("backups")),
+    ])
 }
 
 fn render_project_configure(value: &Value) -> String {

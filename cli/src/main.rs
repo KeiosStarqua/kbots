@@ -221,6 +221,14 @@ enum ProjectCommands {
         #[arg(long)]
         overwrite: bool,
     },
+    /// Sync per-role AGENTS.md starters from the embedded templates.
+    Sync {
+        /// Existing project directory (defaults to the current directory).
+        path: Option<PathBuf>,
+        /// Replace customized AGENTS.md files too; each is backed up first (AGENTS.md.bak[.N]).
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 fn main() {
@@ -239,6 +247,13 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
         } => {
             let result = project_config::configure_project(path, overwrite)?;
             emit("internal.project.configure", &result, cli.json);
+            Ok(())
+        }
+        Commands::Project {
+            command: ProjectCommands::Sync { path, force },
+        } => {
+            let result = project_config::sync_project(path, force)?;
+            emit("internal.project.sync", &result, cli.json);
             Ok(())
         }
         Commands::Sessions {
@@ -370,6 +385,7 @@ fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> 
                 None => ("watchers.list", json!({})),
             },
             ProjectCommands::Configure { .. } => unreachable!("handled before RPC"),
+            ProjectCommands::Sync { .. } => unreachable!("handled before RPC"),
         },
         Commands::Approve { approval_id } => {
             ("approvals.approve", json!({ "approvalId": approval_id }))

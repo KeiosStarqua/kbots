@@ -37,6 +37,8 @@ kbots project add /path/to/project
 kbots project add --name "My Project"   # current directory
 kbots project configure /path/to/project
 kbots project configure --overwrite      # regenerate current project's OpenCode configs
+kbots project sync                        # refresh starter AGENTS.md from embedded templates
+kbots project sync --force                # also replace customs (backs them up first)
 kbots sessions start --directory /path/to/project
 kbots project list
 kbots project show PROJECT-ID
@@ -121,6 +123,13 @@ Projects that already have per-bot OpenCode configs are not auto-migrated:
 copy their settings into `.agents/bot/kbots.json`, then run
 `kbots project configure --overwrite`. Project-specific instructions and
 plugins stay local instead of being copied between repositories.
+
+`kbots project sync` refreshes the starter `.agents/bot/{ceo,git,ops}/AGENTS.md`
+files from the templates embedded at build time. Missing files are created;
+files identical to the template are left alone; customized files are kept unless
+`--force` is passed, in which case each is backed up next to the original as
+`AGENTS.md.bak` (then `AGENTS.md.bak.N`) before the template is written. The
+project manifest and OpenCode configs are not touched.
 
 `kbots sessions start` creates one idle OpenCode session for every enabled bot
 in the manifest, using each role's `.agents/bot/<role>` directory so its
