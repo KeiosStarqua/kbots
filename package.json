@@ -1,11 +1,11 @@
 {
   "name": "kbots",
-  "module": "index.ts",
+  "module": "src/backend/smoke.ts",
   "type": "module",
   "private": true,
   "scripts": {
-    "smoke": "bun run index.ts",
-    "control": "bun run control.ts"
+    "smoke": "bun run src/backend/smoke.ts",
+    "control": "bun run src/backend/cli/control.ts"
   },
   "devDependencies": {
     "@types/bun": "1.4.4",
@@ -15,6 +15,6 @@
     "@opencode/client": "2.3.2",
     "@opencode/plugin": "2.3.2",
     "@opencode/sdk": "2.3.2",
-    "effect": "^4.1.4"
+    "effect": "4.1.4"
   }
 }

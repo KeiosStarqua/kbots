@@ -20,7 +20,7 @@ bun run tsc --noEmit
 `Service.headers()` to apply its authentication header. The header is never
 printed.
 
-Import Effect v4 APIs from `effect`. For example, `control.ts` uses
+Import Effect v4 APIs from `effect`. For example, `src/backend/cli/control.ts` uses
 `Effect.try` to capture model argument parsing failures and `Effect.runSync` to
 run that synchronous parse at the CLI boundary. See the [Effect v4 installation
 guide](https://effect.website/docs/v4/getting-started/installation) for runtime
@@ -28,7 +28,7 @@ requirements and setup details.
 
 ## Embedded host smoke check
 
-`bun run smoke` runs `index.ts`. It creates the host with `OpenCode.create()`,
+`bun run smoke` runs `src/backend/smoke.ts`. It creates the host with `OpenCode.create()`,
 registers a plugin, reads provider metadata, creates a session, sends one
 prompt, waits for completion, reads the assistant response, and removes the
 temporary session.
