@@ -412,9 +412,17 @@ export function getTaskCeoAgent(taskId: string, db: Database = getDb()): AgentRo
   return row ? toAgentRow(row) : null
 }
 
+// CEOs whose last probed session outcome is a finished/unreachable state do
+// not consume an inference slot; only NULL (never probed) or in-flight
+// outcomes count. "unreachable" is excluded: a dead session holds no slot.
 export function countActiveCeoAgents(projectId: string, db: Database = getDb()): number {
   const row = db
-    .query("SELECT COUNT(*) AS count FROM agents WHERE project_id = ? AND role = 'ceo' AND status IN ('starting','running','stopping')")
+    .query(
+      `SELECT COUNT(*) AS count FROM agents
+       WHERE project_id = ? AND role = 'ceo' AND status IN ('starting','running','stopping')
+         AND (last_outcome IS NULL
+              OR last_outcome NOT IN ('succeeded','failed','canceled','ended','aborted','error','unreachable'))`,
+    )
     .get(projectId) as { count: number }
   return row.count
 }

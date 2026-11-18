@@ -29,6 +29,7 @@ import {
   listLiveAgents,
   listProjects,
   listQueuedMessagesForTask,
+  listTasksByStatus,
   listTasksWithQueuedMessages,
   markMessageDelivered,
   incrementMessageAttempts,
@@ -53,6 +54,12 @@ import {
   type HerdrFullTerminal,
 } from "../adapters/herdr.ts"
 import { makeOpencodeClient } from "./opencode.ts"
+
+// Per-task cooldown for retrying dispatch of deferred (cap-blocked) tasks.
+// reconcile runs at boot and before every mutation — and `list` runs every
+// TUI poll — so unthrottled retries would spam `task.deferred` events.
+const DEFERRED_RETRY_COOLDOWN_MS = 10 * 60 * 1000
+const deferredAttemptAt = new Map<string, number>()
 
 const MANAGED_ROLES: readonly AgentRole[] = ["ceo", "git", "ops"]
 const START_TIMEOUT_MS = 5 * 60 * 1000
@@ -652,6 +659,22 @@ export async function reconcileAgents(): Promise<{ checked: number; changed: num
   } catch (flushError) {
     // Reconcile must stay safe: log, never throw.
     console.error(`kbots-daemon: queued message flush failed: ${flushError instanceof Error ? flushError.message : String(flushError)}`)
+  }
+
+  // v5: retry dispatching cap-deferred tasks — slots may have freed because
+  // a CEO finished. Rate-limited per task; dynamic import breaks the static
+  // import cycle (orchestrator → delivery → this module).
+  try {
+    const now = Date.now()
+    const queued = listTasksByStatus(["queued"]).slice().reverse()
+    for (const task of queued) {
+      if (now - (deferredAttemptAt.get(task.taskId) ?? 0) < DEFERRED_RETRY_COOLDOWN_MS) continue
+      deferredAttemptAt.set(task.taskId, now)
+      const { dispatchTask } = await import("../orchestrator/dispatch.ts")
+      await dispatchTask(task.taskId)
+    }
+  } catch (retryError) {
+    console.error(`kbots-daemon: deferred dispatch retry failed: ${retryError instanceof Error ? retryError.message : String(retryError)}`)
   }
   return { checked: live.length, changed }
 }
