@@ -22,7 +22,7 @@ function option(name: string): string | undefined {
 }
 
 const kirAutoDirectory = resolve(process.env.KIR_AUTO_DIRECTORY
-  ?? resolve(import.meta.dir, "../film-production/.agents/bot/kir-auto"))
+  ?? resolve(import.meta.dir, "../../../../film-production/.agents/bot/kir-auto"))
 
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
   console.log(`Usage:
