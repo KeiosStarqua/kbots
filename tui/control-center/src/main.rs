@@ -1,6 +1,12 @@
 use std::io;
 
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::{
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+        KeyModifiers, MouseEventKind,
+    },
+    execute,
+};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -20,30 +26,100 @@ const NAVIGATION: [&str; 6] = [
 
 struct App {
     selected: usize,
+    prefix_pending: bool,
+    navigator_preview: Option<usize>,
+    focused_panel: usize,
+    zoomed: bool,
 }
 
 impl App {
     fn new() -> Self {
-        Self { selected: 0 }
+        Self {
+            selected: 0,
+            prefix_pending: false,
+            navigator_preview: None,
+            focused_panel: 0,
+            zoomed: false,
+        }
     }
 
-    fn handle_key(&mut self, key: KeyCode) -> bool {
-        match key {
+    fn active_section(&self) -> usize {
+        self.navigator_preview.unwrap_or(self.selected)
+    }
+
+    fn move_section(&mut self, offset: isize) {
+        let current = self.active_section();
+        let len = NAVIGATION.len() as isize;
+        let next = (current as isize + offset).rem_euclid(len) as usize;
+        if self.navigator_preview.is_some() {
+            self.navigator_preview = Some(next);
+        } else {
+            self.selected = next;
+        }
+    }
+
+    fn move_panel(&mut self, offset: isize) {
+        const PANELS: usize = 4;
+        self.focused_panel =
+            (self.focused_panel as isize + offset).rem_euclid(PANELS as isize) as usize;
+    }
+
+    fn handle_key(&mut self, key: KeyEvent) -> bool {
+        let code = key.code;
+        let modifiers = key.modifiers;
+
+        if self.navigator_preview.is_some() {
+            match code {
+                KeyCode::Esc => self.navigator_preview = None,
+                KeyCode::Enter => {
+                    self.selected = self.navigator_preview.take().unwrap_or(self.selected);
+                }
+                KeyCode::Left | KeyCode::Up | KeyCode::Char('h') | KeyCode::Char('k') => {
+                    self.move_section(-1)
+                }
+                KeyCode::Right | KeyCode::Down | KeyCode::Char('l') | KeyCode::Char('j') => {
+                    self.move_section(1)
+                }
+                _ => {}
+            }
+            return false;
+        }
+
+        if code == KeyCode::Char('b') && modifiers.contains(KeyModifiers::CONTROL) {
+            self.prefix_pending = true;
+            return false;
+        }
+
+        if self.prefix_pending {
+            self.prefix_pending = false;
+            match code {
+                KeyCode::Char('n') | KeyCode::Right if modifiers.contains(KeyModifiers::SHIFT) => {
+                    self.move_section(1)
+                }
+                KeyCode::Char('p') | KeyCode::Left if modifiers.contains(KeyModifiers::SHIFT) => {
+                    self.move_section(-1)
+                }
+                KeyCode::Char('n') => self.move_section(1),
+                KeyCode::Char('p') => self.move_section(-1),
+                KeyCode::Char('w') => self.navigator_preview = Some(self.selected),
+                KeyCode::Tab if modifiers.contains(KeyModifiers::SHIFT) => self.move_panel(-1),
+                KeyCode::Tab => self.move_panel(1),
+                KeyCode::Char('z') => self.zoomed = !self.zoomed,
+                _ => {}
+            }
+            return false;
+        }
+
+        match code {
             KeyCode::Char('q') | KeyCode::Esc => return true,
             KeyCode::Down | KeyCode::Char('j') => {
-                self.selected = (self.selected + 1) % NAVIGATION.len();
+                self.move_section(1);
             }
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.selected = self.selected.checked_sub(1).unwrap_or(NAVIGATION.len() - 1);
-            }
-            KeyCode::Right | KeyCode::Char('l') => {
-                self.selected = (self.selected + 1) % NAVIGATION.len();
-            }
-            KeyCode::Left | KeyCode::Char('h') => {
-                self.selected = self.selected.checked_sub(1).unwrap_or(NAVIGATION.len() - 1);
-            }
+            KeyCode::Up | KeyCode::Char('k') => self.move_section(-1),
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('n') => self.move_section(1),
+            KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('p') => self.move_section(-1),
             KeyCode::Char('1'..='6') => {
-                if let KeyCode::Char(number) = key {
+                if let KeyCode::Char(number) = code {
                     self.selected = (number as usize) - ('1' as usize);
                 }
             }
@@ -51,17 +127,55 @@ impl App {
         }
         false
     }
+
+    fn handle_mouse(&mut self, kind: MouseEventKind, column: u16, row: u16, width: u16) {
+        let in_workspace_chrome = if width < 112 {
+            row == 3
+        } else {
+            column < 22 && row >= 3
+        };
+        if !in_workspace_chrome {
+            return;
+        }
+        match kind {
+            MouseEventKind::ScrollRight | MouseEventKind::ScrollDown => self.move_section(1),
+            MouseEventKind::ScrollLeft | MouseEventKind::ScrollUp => self.move_section(-1),
+            _ => {}
+        }
+    }
+}
+
+struct MouseCaptureGuard;
+
+impl MouseCaptureGuard {
+    fn enable() -> io::Result<Self> {
+        execute!(io::stdout(), EnableMouseCapture)?;
+        Ok(Self)
+    }
+}
+
+impl Drop for MouseCaptureGuard {
+    fn drop(&mut self) {
+        let _ = execute!(io::stdout(), DisableMouseCapture);
+    }
 }
 
 fn main() -> io::Result<()> {
     let mut app = App::new();
     ratatui::run(|terminal| {
+        let _mouse_capture = MouseCaptureGuard::enable()?;
         loop {
             terminal.draw(|frame| render(frame, &app))?;
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press && app.handle_key(key.code) {
-                    break Ok(());
+            match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    if app.handle_key(key) {
+                        break Ok(());
+                    }
                 }
+                Event::Mouse(mouse) => {
+                    app.handle_mouse(mouse.kind, mouse.column, mouse.row, terminal.size()?.width);
+                }
+                _ => {}
             }
         }
     })
@@ -131,6 +245,10 @@ fn render_header(frame: &mut Frame, area: Rect) {
 }
 
 fn render_body(frame: &mut Frame, area: Rect, app: &App) {
+    if app.zoomed && app.active_section() == 0 {
+        render_focused_panel(frame, area, app.focused_panel);
+        return;
+    }
     if area.width < 112 {
         render_compact_body(frame, area, app);
         return;
@@ -168,13 +286,14 @@ fn render_body(frame: &mut Frame, area: Rect, app: &App) {
         )
         .highlight_symbol("› ");
     let mut selected = ratatui::widgets::ListState::default();
-    selected.select(Some(app.selected));
+    let active_section = app.active_section();
+    selected.select(Some(active_section));
     frame.render_stateful_widget(navigation, columns[0], &mut selected);
 
-    if app.selected == 0 {
-        render_overview(frame, columns[1]);
+    if active_section == 0 {
+        render_overview(frame, columns[1], app);
     } else {
-        render_placeholder(frame, columns[1], NAVIGATION[app.selected]);
+        render_placeholder(frame, columns[1], NAVIGATION[active_section]);
     }
 }
 
@@ -188,9 +307,9 @@ fn render_compact_body(frame: &mut Frame, area: Rect, app: &App) {
         Span::styled(
             format!(
                 "{}/{}  {}",
-                app.selected + 1,
+                app.active_section() + 1,
                 NAVIGATION.len(),
-                NAVIGATION[app.selected]
+                NAVIGATION[app.active_section()]
             ),
             Style::default().fg(Color::White).bold(),
         ),
@@ -198,14 +317,14 @@ fn render_compact_body(frame: &mut Frame, area: Rect, app: &App) {
     ]));
     frame.render_widget(nav, sections[0]);
 
-    if app.selected == 0 {
-        render_compact_overview(frame, sections[1]);
+    if app.active_section() == 0 {
+        render_compact_overview(frame, sections[1], app);
     } else {
-        render_placeholder(frame, sections[1], NAVIGATION[app.selected]);
+        render_placeholder(frame, sections[1], NAVIGATION[app.active_section()]);
     }
 }
 
-fn render_compact_overview(frame: &mut Frame, area: Rect) {
+fn render_compact_overview(frame: &mut Frame, area: Rect, app: &App) {
     if area.height < 9 {
         let summary = Paragraph::new(vec![
             Line::from(Span::styled(
@@ -267,7 +386,11 @@ fn render_compact_overview(frame: &mut Frame, area: Rect) {
             Span::raw("Running tests"),
         ]),
     ])
-    .block(Block::default().borders(Borders::TOP));
+    .block(
+        Block::default()
+            .borders(Borders::TOP)
+            .border_style(panel_border(app.focused_panel == 1)),
+    );
     frame.render_widget(agents, rows[1]);
 
     let queue = Paragraph::new(vec![
@@ -279,7 +402,11 @@ fn render_compact_overview(frame: &mut Frame, area: Rect) {
         Line::from("02 · Billing dashboard [REVIEW]"),
         Line::from("03 · Webhook retries [QUEUED]"),
     ])
-    .block(Block::default().borders(Borders::TOP));
+    .block(
+        Block::default()
+            .borders(Borders::TOP)
+            .border_style(panel_border(app.focused_panel == 2)),
+    );
     frame.render_widget(queue, rows[2]);
 
     let events = Paragraph::new(vec![
@@ -290,11 +417,15 @@ fn render_compact_overview(frame: &mut Frame, area: Rect) {
         Line::from("10:42 worker.done · TASK-104"),
         Line::from("10:39 review.pending · TASK-102"),
     ])
-    .block(Block::default().borders(Borders::TOP));
+    .block(
+        Block::default()
+            .borders(Borders::TOP)
+            .border_style(panel_border(app.focused_panel == 3)),
+    );
     frame.render_widget(events, rows[3]);
 }
 
-fn render_overview(frame: &mut Frame, area: Rect) {
+fn render_overview(frame: &mut Frame, area: Rect, app: &App) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -315,10 +446,22 @@ fn render_overview(frame: &mut Frame, area: Rect) {
     .block(Block::default().borders(Borders::BOTTOM));
     frame.render_widget(title, rows[0]);
 
+    render_metrics(frame, rows[1], app.focused_panel == 0);
+
+    let panels = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
+        .split(rows[2]);
+    render_agents(frame, panels[0], app.focused_panel == 1);
+    render_queue(frame, panels[1], app.focused_panel == 2);
+    render_events(frame, rows[3], app.focused_panel == 3);
+}
+
+fn render_metrics(frame: &mut Frame, area: Rect, focused: bool) {
     let metrics = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Ratio(1, 4); 4])
-        .split(rows[1]);
+        .split(area);
     let cards = [
         ("PROJECTS", "03", "2 running", Color::Cyan),
         ("OPEN TASKS", "12", "4 ready", Color::LightGreen),
@@ -330,7 +473,7 @@ fn render_overview(frame: &mut Frame, area: Rect) {
         ),
         ("APPROVALS", "02", "waiting for review", Color::Yellow),
     ];
-    for (area, (label, value, detail, accent)) in metrics.iter().zip(cards) {
+    for (index, (area, (label, value, detail, accent))) in metrics.iter().zip(cards).enumerate() {
         let card = Paragraph::new(vec![
             Line::from(Span::styled(label, Style::default().fg(Color::Gray).bold())),
             Line::from(vec![
@@ -341,21 +484,32 @@ fn render_overview(frame: &mut Frame, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .border_style(panel_border(focused && index == 0)),
         );
         frame.render_widget(card, *area);
     }
-
-    let panels = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
-        .split(rows[2]);
-    render_agents(frame, panels[0]);
-    render_queue(frame, panels[1]);
-    render_events(frame, rows[3]);
 }
 
-fn render_agents(frame: &mut Frame, area: Rect) {
+fn render_focused_panel(frame: &mut Frame, area: Rect, panel: usize) {
+    match panel {
+        0 => render_metrics(frame, area, true),
+        1 => render_agents(frame, area, true),
+        2 => render_queue(frame, area, true),
+        _ => render_events(frame, area, true),
+    }
+}
+
+fn panel_border(focused: bool) -> Style {
+    if focused {
+        Style::default()
+            .fg(Color::LightGreen)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    }
+}
+
+fn render_agents(frame: &mut Frame, area: Rect, focused: bool) {
     let rows = [
         Row::new(["CEO Bot", "Planning · api-service", "Planning"])
             .style(Style::default().fg(Color::Magenta)),
@@ -381,12 +535,13 @@ fn render_agents(frame: &mut Frame, area: Rect) {
     .block(
         Block::default()
             .title(" Agent activity ")
-            .borders(Borders::ALL),
+            .borders(Borders::ALL)
+            .border_style(panel_border(focused)),
     );
     frame.render_widget(table, area);
 }
 
-fn render_queue(frame: &mut Frame, area: Rect) {
+fn render_queue(frame: &mut Frame, area: Rect, focused: bool) {
     let items = [
         "01  Implement authentication\n     api-service · CODING",
         "02  Update billing dashboard\n     merchant-portal · REVIEW",
@@ -398,12 +553,13 @@ fn render_queue(frame: &mut Frame, area: Rect) {
         .block(
             Block::default()
                 .title(" Workflow queue ")
-                .borders(Borders::ALL),
+                .borders(Borders::ALL)
+                .border_style(panel_border(focused)),
         );
     frame.render_widget(queue, area);
 }
 
-fn render_events(frame: &mut Frame, area: Rect) {
+fn render_events(frame: &mut Frame, area: Rect, focused: bool) {
     let events = Paragraph::new(vec![
         Line::from(vec![
             Span::styled(
@@ -423,7 +579,8 @@ fn render_events(frame: &mut Frame, area: Rect) {
     .block(
         Block::default()
             .title(" Recent events · sample ")
-            .borders(Borders::ALL),
+            .borders(Borders::ALL)
+            .border_style(panel_border(focused)),
     );
     frame.render_widget(events, area);
 }
@@ -448,31 +605,26 @@ fn render_placeholder(frame: &mut Frame, area: Rect, section: &str) {
 fn render_footer(frame: &mut Frame, area: Rect) {
     let line = if area.width < 70 {
         Line::from(vec![
-            Span::styled("←/→ ", Style::default().fg(Color::LightGreen).bold()),
-            Span::raw("sections  "),
+            Span::styled("n/p ", Style::default().fg(Color::LightGreen).bold()),
+            Span::raw("sections · Ctrl+B chords  "),
             Span::styled("q ", Style::default().fg(Color::LightGreen).bold()),
             Span::raw("quit"),
         ])
     } else if area.width < 112 {
         Line::from(vec![
-            Span::styled("←/→ or j/k ", Style::default().fg(Color::LightGreen).bold()),
-            Span::raw("sections   "),
-            Span::styled("1–6 ", Style::default().fg(Color::LightGreen).bold()),
-            Span::raw("jump   "),
+            Span::styled("n/p ", Style::default().fg(Color::LightGreen).bold()),
+            Span::raw("sections · Ctrl+B Tab panes · z focus · wheel nav   "),
             Span::styled("q ", Style::default().fg(Color::LightGreen).bold()),
             Span::raw("quit"),
         ])
     } else {
         Line::from(vec![
-            Span::styled(
-                " ↑/↓ or j/k ",
-                Style::default().fg(Color::LightGreen).bold(),
+            Span::styled("←/→ n/p ", Style::default().fg(Color::LightGreen).bold()),
+            Span::raw(
+                "sections · Ctrl+B n/p sections · Ctrl+B w arrows Enter navigator · Ctrl+B Tab/Shift+Tab panes · Ctrl+B z zoom · wheel nav   ",
             ),
-            Span::raw("navigate   "),
-            Span::styled("1–6 ", Style::default().fg(Color::LightGreen).bold()),
-            Span::raw("jump to section   "),
-            Span::styled("q / Esc ", Style::default().fg(Color::LightGreen).bold()),
-            Span::raw("quit and restore terminal"),
+            Span::styled("q/Esc ", Style::default().fg(Color::LightGreen).bold()),
+            Span::raw("quit"),
         ])
     };
     let footer = Paragraph::new(line);
