@@ -16,6 +16,12 @@ kbots tasks add "Implement authentication" --project api-service
 kbots tasks list --project api-service
 kbots tasks show TASK-104
 kbots agents list
+kbots agents start git --mode terminal
+kbots agents start ops --mode headless --project api-service
+kbots agents show AGT-1
+kbots agents prompt AGT-1 "Review PR #42"
+kbots agents interrupt AGT-1
+kbots agents stop AGT-1
 kbots project add /path/to/project
 kbots project add --name "My Project"   # current directory
 kbots project configure /path/to/project
@@ -27,6 +33,24 @@ kbots approve DEPLOY-23
 kbots tui
 kbots gui
 ```
+
+`agents list` shows the registry, saved session IDs, and live Herdr terminals. Managed
+bots — spawned and tracked by the daemon with exact session binding — are started and
+driven with:
+
+```sh
+kbots agents start git --mode terminal          # or --mode headless
+kbots agents start git --mode headless --fresh  # new session instead of resuming
+kbots agents show AGT-1
+kbots agents prompt AGT-1 "Review PR #42"
+kbots agents interrupt AGT-1                    # esc, session kept
+kbots agents stop AGT-1                         # terminal killed, session kept
+```
+
+Terminal mode spawns `opencode --session <id>` inside the role directory in a
+Herdr-managed terminal; headless mode talks to the registered OpenCode service
+only. Prompts are refused unless the agent is idle; `stop` keeps the OpenCode
+session and history, `start` resumes the same session.
 
 Use `--socket PATH` or `KBOTS_SOCKET` to select the daemon socket. By default,
 the CLI uses `$XDG_RUNTIME_DIR/kbots.sock`, falling back to

@@ -16,6 +16,6 @@ continue running.
 Current root package scripts use `smoke.ts`, `cli/control.ts`, and
 `cli/start-sessions.ts` as transitional entry points. The session starter
 creates or reuses idle OpenCode sessions for enabled bot roles from the project
-manifest; the workflow daemon (`src/backend/daemon.ts`, `bun run daemon`) serves the v1 JSON-RPC contract and will own this lifecycle.
+manifest; the workflow daemon (`src/backend/daemon.ts`, `bun run daemon`) serves the v1 JSON-RPC contract and owns the managed bot lifecycle (`agents.start/show/stop/prompt/interrupt`).
 Move their implementation into the responsibility modules as the orchestrator
 is built.

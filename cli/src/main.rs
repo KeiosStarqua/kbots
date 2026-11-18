@@ -93,6 +93,44 @@ enum TaskCommands {
 enum AgentCommands {
     /// List agent roles, active runs, and session identifiers.
     List,
+    /// Start (or resume) a bot agent for a registered project.
+    Start {
+        /// Bot role to start.
+        #[arg(value_parser = ["ceo", "git", "ops"])]
+        role: String,
+        /// Runtime mode.
+        #[arg(long, value_enum, default_value_t = AgentMode::Terminal)]
+        mode: AgentMode,
+        /// Project id, name, or path (defaults to the current directory).
+        #[arg(long)]
+        project: Option<String>,
+        /// Start a fresh session instead of resuming the existing one.
+        #[arg(long)]
+        fresh: bool,
+    },
+    /// Show one agent and probe its runtime.
+    Show { bot_id: String },
+    /// Stop one agent (keeps its OpenCode session and history).
+    Stop { bot_id: String },
+    /// Send a prompt to one agent.
+    Prompt { bot_id: String, text: String },
+    /// Interrupt one agent's current run (keeps session and terminal).
+    Interrupt { bot_id: String },
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+enum AgentMode {
+    Headless,
+    Terminal,
+}
+
+impl AgentMode {
+    fn as_str(&self) -> &'static str {
+        match self {
+            AgentMode::Headless => "headless",
+            AgentMode::Terminal => "terminal",
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -190,9 +228,26 @@ fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> 
             TaskCommands::Show { task_id } => ("tasks.get", json!({ "taskId": task_id })),
             TaskCommands::Cancel { task_id } => ("tasks.cancel", json!({ "taskId": task_id })),
         },
-        Commands::Agents {
-            command: AgentCommands::List,
-        } => ("agents.list", json!({})),
+        Commands::Agents { command } => match command {
+            AgentCommands::List => ("agents.list", json!({})),
+            AgentCommands::Start {
+                role,
+                mode,
+                project,
+                fresh,
+            } => (
+                "agents.start",
+                json!({ "role": role, "mode": mode.as_str(), "project": project, "fresh": fresh }),
+            ),
+            AgentCommands::Show { bot_id } => ("agents.show", json!({ "botId": bot_id })),
+            AgentCommands::Stop { bot_id } => ("agents.stop", json!({ "botId": bot_id })),
+            AgentCommands::Prompt { bot_id, text } => {
+                ("agents.prompt", json!({ "botId": bot_id, "text": text }))
+            }
+            AgentCommands::Interrupt { bot_id } => {
+                ("agents.interrupt", json!({ "botId": bot_id }))
+            }
+        },
         Commands::Sessions { .. } => unreachable!("session commands are handled before RPC"),
         Commands::Project { command } => match command {
             ProjectCommands::Add { path, name } => {

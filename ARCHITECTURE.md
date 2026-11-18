@@ -58,7 +58,7 @@ and work without that daemon.
 | `src/backend/opencode/` | Shared OpenCode service/session adapter | Planned module boundary; behavior currently lives in CLI scripts |
 | `src/backend/orchestrator/` | v1 task/project/approval/system services; scheduling, workflow state transitions, event ingestion, restart reconciliation | v1 services implemented; workflow engine and scheduling still planned |
 | `src/backend/workflows/` | Task stages, dependencies, acceptance criteria, retry and approval rules | Planned |
-| `src/backend/bots/` | agents.list implemented (read-only registry/manifest/session merge); CEO planning/review, GIT and OPS work contracts, coding worker policies | Work contracts still planned |
+| `src/backend/bots/` | agents.list implemented (incl. managed `agents.start/show/stop/prompt/interrupt` lifecycle: exact session binding, terminal+headless modes, SQLite registry, boot reconciliation); CEO planning/review, GIT and OPS work contracts, coding worker policies | Lifecycle implemented; work contracts still planned |
 | `src/backend/adapters/` | Herdr adapter (read-only `hc ls`) implemented; Git and optional agmsg integrations | Herdr implemented; Git/agmsg planned |
 | `src/backend/db/` | SQLite schema, migrations, repositories, transaction boundaries | Implemented minimal persistence (WAL) |
 | `src/backend/daemon.ts` | Bun daemon entry point: newline-delimited JSON-RPC over a Unix domain socket, SQLite-backed | Implemented (v1 minimal); deployed as the `kbots-daemon` systemd user service by install.sh (opt out with `KBOTS_SKIP_DAEMON_UNIT=1`) |
@@ -192,7 +192,8 @@ above. The v1 RPC surface includes:
 | `system.status` | Daemon and workflow summary |
 | `tasks.create`, `tasks.list`, `tasks.get`, `tasks.cancel` | Task lifecycle |
 | `projects.register`, `projects.list`, `projects.get` | Project registry |
-| `agents.list` | Bot roles, runs, and session identifiers |
+| `agents.list` | Bot roles, runs, session identifiers, and managed bots (`managed`) |
+| `agents.start`, `agents.show`, `agents.stop`, `agents.interrupt`, `agents.prompt` | Managed bot lifecycle: exact session binding, terminal+headless modes, SQLite registry |
 | `approvals.list`, `approvals.approve` | Protected operation approvals |
 | `events.list` | Recent activity for the GUI |
 
@@ -203,8 +204,12 @@ carry the same ID and either a result or error. This is a v1 contract served by
 yet, and tasks are not wired to OpenCode prompting. `tasks.cancel` is
 idempotent, `projects.register` upserts by canonical path, `approvals.approve`
 only records the decision (no protected operation is auto-executed), and
-`agents.list` is read-only. Unknown methods return `-32601`. Clients must not
-write workflow state directly.
+`agents.list` is read-only; the managed lifecycle (`agents.start/show/stop/
+interrupt/prompt`) is documented in [`docs/kbots-ipc.md`](docs/kbots-ipc.md)
+("Managed agents"): exact SDK session binding, compensation-based spawn with
+a `starting → running → stopping → stopped/error` state model, boot-time
+reconciliation, and prompts refused unless the agent is idle. Unknown
+methods return `-32601`. Clients must not write workflow state directly.
 
 ## Planned workflow and persistence model
 

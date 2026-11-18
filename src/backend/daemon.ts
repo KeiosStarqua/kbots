@@ -24,7 +24,15 @@ import { createTaskHandler, listTasksHandler, getTaskHandler, cancelTaskHandler 
 import { listApprovalsHandler, approveApprovalHandler } from "./orchestrator/approvals.ts"
 import { listEventsHandler } from "./orchestrator/events.ts"
 import { systemStatusHandler, DAEMON_NAME } from "./orchestrator/system.ts"
-import { agentsListHandler } from "./bots/agents.ts"
+import {
+  agentsListHandler,
+  agentsStartHandler,
+  agentsStopHandler,
+  agentsInterruptHandler,
+  agentsPromptHandler,
+  agentsShowHandler,
+  reconcileAgents,
+} from "./bots/agents.ts"
 
 const MAX_REQUEST_BYTES = 1024 * 1024
 const SOCKET_TIMEOUT_MS = 10_000
@@ -63,6 +71,11 @@ function buildHandlers(socket: string): Record<string, Handler> {
     "projects.list": () => listProjectsHandler(),
     "projects.get": getProjectHandler,
     "agents.list": () => agentsListHandler(),
+    "agents.start": agentsStartHandler,
+    "agents.show": agentsShowHandler,
+    "agents.stop": agentsStopHandler,
+    "agents.prompt": agentsPromptHandler,
+    "agents.interrupt": agentsInterruptHandler,
     "approvals.list": listApprovalsHandler,
     "approvals.approve": approveApprovalHandler,
     "events.list": listEventsHandler,
@@ -161,6 +174,13 @@ async function main(): Promise<void> {
   })
   await chmod(path, 0o600)
   console.error(`${DAEMON_NAME}: listening on ${path}`)
+  void reconcileAgents()
+    .then(({ checked, changed }) => {
+      if (checked > 0) console.error(`${DAEMON_NAME}: reconciled ${checked} live agent(s), ${changed} changed`)
+    })
+    .catch((error: unknown) => {
+      console.error(`${DAEMON_NAME}: reconciliation failed: ${error instanceof Error ? error.message : String(error)}`)
+    })
 }
 
 main().catch((error: unknown) => {

@@ -19,6 +19,10 @@ pub fn render(method: &str, value: &Value) -> Option<String> {
         "projects.get" => Some(render_project_get(value)),
         "approvals.approve" => Some(render_approval(value)),
         "agents.list" => Some(render_agents(value)),
+        "agents.start" | "agents.show" => Some(render_agent_detail(value)),
+        "agents.stop" => Some(render_agent_action(value, "stopped")),
+        "agents.prompt" => Some(render_agent_action(value, "accepted")),
+        "agents.interrupt" => Some(render_agent_interrupt(value)),
         "internal.sessions.start" => Some(render_sessions_start(value)),
         "internal.project.configure" => Some(render_project_configure(value)),
         _ => None,
@@ -276,10 +280,137 @@ fn render_approval(value: &Value) -> String {
     }
 }
 
+fn session_short(session_id: Option<&str>) -> String {
+    match session_id {
+        Some(id) => {
+            if id.chars().count() > 18 {
+                let keep: String = id.chars().take(16).collect();
+                format!("{keep}…")
+            } else {
+                id.to_owned()
+            }
+        }
+        None => "-".to_owned(),
+    }
+}
+
+fn render_agent_detail(value: &Value) -> String {
+    let id = string(value, "id").unwrap_or_else(|| "?".to_owned());
+    let role = string(value, "role").unwrap_or_else(|| "?".to_owned());
+    let mode = string(value, "mode").unwrap_or_else(|| "?".to_owned());
+    let project = match (string(value, "projectName"), string(value, "projectId")) {
+        (Some(name), Some(id)) => format!("{name} ({id})"),
+        (Some(name), None) => name,
+        (None, Some(id)) => id,
+        (None, None) => "-".to_owned(),
+    };
+    let live = value.get("live").filter(|live| !live.is_null());
+    let live_text = match live {
+        Some(live) => {
+            if let Some(status) = live.get("status").and_then(Value::as_str) {
+                format!(
+                    "{} ({})",
+                    live.get("state").and_then(Value::as_str).unwrap_or("?"),
+                    status
+                )
+            } else {
+                live.get("state")
+                    .or_else(|| live.get("outcome"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_owned()
+            }
+        }
+        None => "unreachable".to_owned(),
+    };
+    detail(&[
+        ("agent", format!("{id} · {role} · {mode}")),
+        ("project", project),
+        ("status", string(value, "status").unwrap_or_else(|| "?".to_owned())),
+        ("live", live_text),
+        ("session", nullable(value, "sessionId")),
+        ("terminal", nullable(value, "hcAddress")),
+        ("directory", string(value, "directory").unwrap_or_else(|| "-".to_owned())),
+        ("created", string(value, "createdAt").unwrap_or_else(|| "-".to_owned())),
+        ("updated", string(value, "updatedAt").unwrap_or_else(|| "-".to_owned())),
+    ])
+}
+
+fn render_agent_action(value: &Value, verb: &str) -> String {
+    let id = string(value, "id")
+        .or_else(|| string(value, "botId"))
+        .unwrap_or_else(|| "?".to_owned());
+    match verb {
+        "stopped" => format!("{id} stopped (session kept)"),
+        _ => {
+            let turn = value.get("turn").and_then(Value::as_i64);
+            match turn {
+                Some(turn) => format!("prompt sent to {id} (turn {turn})"),
+                None => format!("prompt sent to {id}"),
+            }
+        }
+    }
+}
+
+fn render_agent_interrupt(value: &Value) -> String {
+    let id = string(value, "botId").unwrap_or_else(|| "?".to_owned());
+    let outcome = string(value, "outcome").unwrap_or_else(|| "unknown".to_owned());
+    let key = string(value, "key");
+    match key {
+        Some(key) => format!("interrupted {id} ({outcome}, key {key})"),
+        None => format!("interrupted {id} ({outcome})"),
+    }
+}
+
+fn render_managed_agents(managed: &[Value]) -> String {
+    let rows: Vec<Vec<String>> = managed
+        .iter()
+        .map(|agent| {
+            let runtime = agent
+                .get("hcAddress")
+                .and_then(Value::as_str)
+                .or_else(|| agent.get("sessionId").and_then(Value::as_str))
+                .map(|value| session_short(Some(value)))
+                .unwrap_or_else(|| "-".to_owned());
+            let live = agent
+                .get("live")
+                .filter(|live| !live.is_null())
+                .and_then(|live| live.get("state").or_else(|| live.get("outcome")).and_then(Value::as_str))
+                .unwrap_or("?");
+            vec![
+                string(agent, "id").unwrap_or_else(|| "?".to_owned()),
+                agent
+                    .get("projectName")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| "-".to_owned()),
+                string(agent, "role").unwrap_or_else(|| "?".to_owned()),
+                string(agent, "mode").unwrap_or_else(|| "?".to_owned()),
+                string(agent, "status").unwrap_or_else(|| "?".to_owned()),
+                live.to_owned(),
+                runtime,
+            ]
+        })
+        .collect();
+    table(&["ID", "PROJECT", "ROLE", "MODE", "STATUS", "LIVE", "RUNTIME"], &rows)
+}
+
 fn render_agents(value: &Value) -> String {
     use std::collections::HashMap;
 
     let mut lines: Vec<String> = Vec::new();
+
+    let managed = value
+        .get("managed")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if !managed.is_empty() {
+        lines.push(format!("{BOLD}Managed bots{RESET}"));
+        lines.push(render_managed_agents(&managed));
+        lines.push(String::new());
+    }
+
     let items = list_items(value);
     if items.is_empty() {
         lines.push("No registered agents. See `kbots project add`.".to_owned());

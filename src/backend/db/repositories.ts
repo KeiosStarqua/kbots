@@ -373,3 +373,189 @@ export function listEvents(limit: number, db: Database = getDb()): EventRow[] {
     .all(limit) as EventRecord[]
   return rows.map(toEventRow)
 }
+
+export type AgentStatus = "starting" | "running" | "stopping" | "stopped" | "error"
+export type AgentMode = "headless" | "terminal"
+export type AgentRole = "ceo" | "git" | "ops" | "worker"
+
+export interface AgentRow {
+  id: string
+  projectId: string
+  role: AgentRole
+  mode: AgentMode
+  directory: string
+  status: AgentStatus
+  sessionId: string | null
+  hcAddress: string | null
+  name: string | null
+  createdAt: string
+  updatedAt: string
+  stoppedAt: string | null
+  lastError: string | null
+}
+
+interface AgentRecord {
+  id: string
+  project_id: string
+  role: string
+  mode: string
+  directory: string
+  status: string
+  session_id: string | null
+  hc_address: string | null
+  name: string | null
+  created_at: string
+  updated_at: string
+  stopped_at: string | null
+  last_error: string | null
+}
+
+const AGENT_ROLES: readonly AgentRole[] = ["ceo", "git", "ops", "worker"]
+const AGENT_MODES: readonly AgentMode[] = ["headless", "terminal"]
+const AGENT_STATUSES: readonly AgentStatus[] = ["starting", "running", "stopping", "stopped", "error"]
+const LIVE_AGENT_STATUSES: readonly AgentStatus[] = ["starting", "running", "stopping"]
+
+function toAgentRow(record: AgentRecord): AgentRow {
+  return {
+    id: record.id,
+    projectId: record.project_id,
+    role: (AGENT_ROLES as readonly string[]).includes(record.role) ? (record.role as AgentRole) : "worker",
+    mode: (AGENT_MODES as readonly string[]).includes(record.mode) ? (record.mode as AgentMode) : "headless",
+    directory: record.directory,
+    status: (AGENT_STATUSES as readonly string[]).includes(record.status) ? (record.status as AgentStatus) : "error",
+    sessionId: record.session_id,
+    hcAddress: record.hc_address,
+    name: record.name,
+    createdAt: record.created_at,
+    updatedAt: record.updated_at,
+    stoppedAt: record.stopped_at,
+    lastError: record.last_error,
+  }
+}
+
+export function createAgent(
+  input: {
+    projectId: string
+    role: AgentRole
+    mode: AgentMode
+    directory: string
+    name?: string | null
+    sessionId?: string | null
+    hcAddress?: string | null
+    status?: AgentStatus
+  },
+  db: Database = getDb(),
+): AgentRow {
+  const run = db.transaction((): AgentRow => {
+    const timestamp = now()
+    const id = nextId("AGT", db)
+    db.query(
+      `INSERT INTO agents(id, project_id, role, mode, directory, status, session_id, hc_address, name, created_at, updated_at, stopped_at, last_error)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
+    ).run(
+      id,
+      input.projectId,
+      input.role,
+      input.mode,
+      input.directory,
+      input.status ?? "starting",
+      input.sessionId ?? null,
+      input.hcAddress ?? null,
+      input.name ?? null,
+      timestamp,
+      timestamp,
+    )
+    const row = db.query("SELECT * FROM agents WHERE id = ?").get(id) as AgentRecord
+    return toAgentRow(row)
+  })
+  return run()
+}
+
+export function getAgent(agentId: string, db: Database = getDb()): AgentRow | null {
+  const row = db.query("SELECT * FROM agents WHERE id = ?").get(agentId) as AgentRecord | null
+  return row ? toAgentRow(row) : null
+}
+
+export function getActiveAgentByProjectRole(
+  projectId: string,
+  role: string,
+  db: Database = getDb(),
+): AgentRow | null {
+  const row = db
+    .query("SELECT * FROM agents WHERE project_id = ? AND role = ? AND status IN ('starting','running','stopping')")
+    .get(projectId, role) as AgentRecord | null
+  return row ? toAgentRow(row) : null
+}
+
+export function getActiveAgentByName(name: string, db: Database = getDb()): AgentRow | null {
+  const row = db
+    .query("SELECT * FROM agents WHERE name = ? AND status IN ('starting','running','stopping')")
+    .get(name) as AgentRecord | null
+  return row ? toAgentRow(row) : null
+}
+
+export function getLatestAgentByProjectRole(
+  projectId: string,
+  role: string,
+  db: Database = getDb(),
+): AgentRow | null {
+  const row = db
+    .query("SELECT * FROM agents WHERE project_id = ? AND role = ? ORDER BY created_at DESC, id DESC LIMIT 1")
+    .get(projectId, role) as AgentRecord | null
+  return row ? toAgentRow(row) : null
+}
+
+export function updateAgent(
+  agentId: string,
+  patch: Partial<{
+    status: AgentStatus
+    mode: AgentMode
+    sessionId: string | null
+    hcAddress: string | null
+    name: string | null
+    stoppedAt: string | null
+    lastError: string | null
+  }>,
+  db: Database = getDb(),
+): AgentRow | null {
+  const sets: string[] = []
+  const values: (string | null)[] = []
+  if ("status" in patch) { sets.push("status = ?"); values.push(patch.status ?? null) }
+  if ("mode" in patch) { sets.push("mode = ?"); values.push(patch.mode ?? null) }
+  if ("sessionId" in patch) { sets.push("session_id = ?"); values.push(patch.sessionId ?? null) }
+  if ("hcAddress" in patch) { sets.push("hc_address = ?"); values.push(patch.hcAddress ?? null) }
+  if ("name" in patch) { sets.push("name = ?"); values.push(patch.name ?? null) }
+  if ("stoppedAt" in patch) { sets.push("stopped_at = ?"); values.push(patch.stoppedAt ?? null) }
+  if ("lastError" in patch) { sets.push("last_error = ?"); values.push(patch.lastError ?? null) }
+  if (sets.length === 0) return getAgent(agentId, db)
+  sets.push("updated_at = ?")
+  values.push(now())
+  values.push(agentId)
+  db.query(`UPDATE agents SET ${sets.join(", ")} WHERE id = ?`).run(...values)
+  return getAgent(agentId, db)
+}
+
+export function listAgents(db: Database = getDb()): AgentRow[] {
+  const rows = db
+    .query("SELECT * FROM agents ORDER BY created_at ASC, id ASC")
+    .all() as AgentRecord[]
+  return rows.map(toAgentRow)
+}
+
+export function listStartingAgents(db: Database = getDb()): AgentRow[] {
+  const rows = db
+    .query("SELECT * FROM agents WHERE status = 'starting'")
+    .all() as AgentRecord[]
+  return rows.map(toAgentRow)
+}
+
+export function listLiveAgents(db: Database = getDb()): AgentRow[] {
+  const rows = db
+    .query("SELECT * FROM agents WHERE status IN ('starting','running','stopping')")
+    .all() as AgentRecord[]
+  return rows.map(toAgentRow)
+}
+
+export function isLiveAgentStatus(status: AgentStatus): boolean {
+  return (LIVE_AGENT_STATUSES as readonly string[]).includes(status)
+}
