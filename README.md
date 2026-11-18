@@ -39,7 +39,8 @@ The installer adds a desktop launcher at
 `${XDG_DATA_HOME:-$HOME/.local/share}/applications/kbots.desktop` and uses
 `~/.local/bin` for binaries by default. Set `KBOTS_INSTALL_DIR` to use a
 different destination, for example `KBOTS_INSTALL_DIR="$HOME/bin" ./install.sh`.
-It does not use `sudo`. The installer also installs and restarts the
+It does not use `sudo`. `install.sh` also installs `kb`, a short alias for
+`kbots`. The installer also installs and restarts the
 `kbots-daemon` systemd user service (from `deploy/kbots-daemon.service`) so the
 daemon is always running freshly deployed code; opt out with
 `KBOTS_SKIP_DAEMON_UNIT=1`. Without a user systemd session, start the daemon

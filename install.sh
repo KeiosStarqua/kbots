@@ -37,6 +37,10 @@ install -m 755 \
 
 rm -f "${install_dir}/kbots-cli"
 
+# Short alias: kb -> kbots
+rm -f "${install_dir}/kb"
+ln -s kbots "${install_dir}/kb"
+
 desktop_dir="${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
 desktop_file="${desktop_dir}/kbots.desktop"
 desktop_exec="${install_dir}/kbots-gui"
@@ -54,10 +58,11 @@ while IFS= read -r line || [[ -n "${line}" ]]; do
 done < "${repo_root}/gui/kbots.desktop.in" > "${desktop_file}"
 chmod 644 "${desktop_file}"
 
-printf '\nInstalled commands:\n  %s\n  %s\n  %s\nDesktop launcher:\n  %s\n' \
+printf '\nInstalled commands:\n  %s\n  %s (alias for kbots)\n  %s\n  %s\nDesktop launcher:\n  %s\n' \
+  "${install_dir}/kbots" \
+  "${install_dir}/kb" \
   "${install_dir}/kbots-gui" \
   "${install_dir}/kbots-tui" \
-  "${install_dir}/kbots" \
   "${desktop_file}"
 
 unit_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/systemd/user"

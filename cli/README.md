@@ -1,6 +1,7 @@
 # Automation CLI
 
-`kbots` is a Rust command-line client for automation. It exposes stable
+`kbots` is a Rust command-line client for automation. `kb` is a short
+alias `install.sh` links to it (`~/.local/bin/kb` → `kbots`). It exposes stable
 subcommands, then sends daemon-owned operations over a local Unix domain
 socket. It does not implement orchestration or bypass daemon-side
 authorization and idempotency checks. When stdout is a terminal, output is a
