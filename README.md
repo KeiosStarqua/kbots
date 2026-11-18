@@ -1,8 +1,8 @@
 # kbots
 
 `kbots` is a local coding workflow orchestrator workspace. Its Bun/TypeScript
-backend manages OpenCode sessions and workflow automation; a native Slint
-Control Center is being built as its operator interface. The existing tools
+backend manages OpenCode sessions and workflow automation; native Slint and
+Ratatui apps provide desktop and terminal operator interfaces. The existing tools
 also support inspecting and continuing the scheduled `kir-auto` bot session
 in the sibling `film-production` checkout.
 
@@ -18,10 +18,24 @@ The package has two entry points:
 ## Control Center starter
 
 The workspace separates the Bun backend in `src/backend/` from the Rust/Slint
-desktop client in `gui/control-center/`. The first dashboard includes sidebar
-navigation, project/task/agent/approval summary cards, agent activity, a task
-queue, and recent events. Its displayed values are demo data; it does not yet
-connect to a daemon.
+desktop client in `gui/control-center/` and the Rust/Ratatui terminal client in
+`tui/control-center/`. Both interfaces will connect to one Bun daemon. The
+dashboards include navigation, project/task/agent/approval summaries, agent
+activity, a task queue, and recent events. Displayed values are demo data; the
+interfaces do not yet connect to a daemon. The `kbots-cli` automation entry
+point is in `cli/` and uses the planned JSON-RPC socket contract.
+
+After completing application changes, install the latest GUI, TUI, and CLI
+binaries and verify the TypeScript backend with:
+
+```sh
+./install.sh
+```
+
+The installer uses `~/.local/bin` by default. Set `KBOTS_INSTALL_DIR` to use a
+different destination, for example `KBOTS_INSTALL_DIR="$HOME/bin" ./install.sh`.
+It does not use `sudo`. The Bun daemon remains a source package because its
+daemon executable has not been implemented yet.
 
 Run the desktop starter with:
 
@@ -29,8 +43,22 @@ Run the desktop starter with:
 cargo run --manifest-path gui/control-center/Cargo.toml
 ```
 
-See [`gui/README.md`](gui/README.md) for the planned IPC boundary and
+Start the terminal dashboard in Herdr, tmux, SSH, or Mosh with:
+
+```sh
+cargo run --manifest-path tui/control-center/Cargo.toml
+```
+
+The TUI demo uses arrow keys or `j`/`k` to navigate, `1`–`6` to jump to a
+section, and `q` or `Esc` to exit. The CLI can launch either UI and defines
+automation commands for status, tasks, agents, and approvals. Until the daemon
+is implemented, those API commands return a clear socket connection error.
+
+See [`gui/README.md`](gui/README.md) and [`tui/README.md`](tui/README.md) for
+the clients and planned IPC boundary, and
 [`src/backend/README.md`](src/backend/README.md) for backend module ownership.
+See [`cli/README.md`](cli/README.md) for the CLI commands and
+[`docs/kbots-ipc.md`](docs/kbots-ipc.md) for their JSON-RPC contract.
 
 ## Requirements and setup
 

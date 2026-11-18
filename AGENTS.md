@@ -7,11 +7,17 @@
 ## Ownership
 
 - This folder owns its package, lockfile, scripts, and `docs/` reference material.
-- Keep the Bun/TypeScript orchestration backend in `src/backend/` and the native
-  Slint desktop client in `gui/control-center/`. The GUI talks to a daemon over a
-  local IPC boundary; it must not own bot scheduling or OpenCode sessions.
-- Build the desktop UI with Slint; keep sample dashboard state clearly marked
-  until it is connected to the backend API.
+- Keep the Bun/TypeScript orchestration backend in `src/backend/`, the Slint
+  desktop client in `gui/control-center/`, the Ratatui terminal client in
+  `tui/control-center/`, and the automation CLI in `cli/`. GUI, TUI,
+  and CLI talk to the daemon over a local IPC boundary; clients do not own bot
+  scheduling or OpenCode sessions.
+- Keep sample UI state clearly marked until connected to the backend API. The
+  TUI must restore terminal state on normal exit and on panics.
+- After completing application code changes, run `./install.sh` to synchronize
+  Bun dependencies, type-check, build the Rust clients, and install their
+  binaries. Use `KBOTS_INSTALL_DIR` when the default `~/.local/bin` is not the
+  intended destination.
 - Keep backend modules separated by responsibility: `cli/`, `opencode/`,
   `orchestrator/`, `bots/`, `workflows/`, `adapters/`, and `db/`.
 - `film-production/.agents/bot/kir-auto/` owns the scheduled bot instructions and job log.
@@ -34,6 +40,7 @@
 
 - Keep session inspection read-only and scope existing-session actions to the selected directory.
 - Keep operational and API details in `docs/opencode-control.md`.
+- Keep the GUI/TUI/CLI daemon transport contract in `docs/kbots-ipc.md`.
 
 ## Verification
 
@@ -44,3 +51,6 @@
 
 - `docs/opencode-control.md`: embedded SDK setup, local service client, provider behavior, and
   session commands.
+- `docs/kbots-ipc.md`: local JSON-RPC protocol for the daemon clients.
+- `cli/README.md`: automation CLI behavior and command examples.
+- `gui/README.md` and `tui/README.md`: UI client ownership and run commands.

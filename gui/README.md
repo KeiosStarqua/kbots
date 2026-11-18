@@ -1,9 +1,10 @@
 # Desktop GUI
 
-`control-center/` is the native Slint application (Rust + Slint 1.19). It is a presentation and
-operator-control client; workflow policy, persistence, and bot execution stay
-in the Bun backend. The planned connection boundary is a local Unix socket
-using JSON-RPC, with event notifications flowing from the daemon to the GUI.
+`control-center/` is the native Slint application (Rust + Slint 1.19). It is a
+presentation and operator-control client; workflow policy, persistence, and bot
+execution stay in the Bun backend. The planned connection boundary is a local
+Unix socket using JSON-RPC, with event notifications flowing from the daemon
+to both this GUI and the [Ratatui TUI](../tui/README.md).
 
 The first screen is a dashboard scaffold with sample content. Live state,
 commands, logs, approvals, and reconnect behavior will be added after the
