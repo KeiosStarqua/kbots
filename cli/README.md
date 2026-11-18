@@ -51,9 +51,15 @@ kbots agents show AGT-1
 kbots agents prompt AGT-1 "Review PR #42"
 kbots agents interrupt AGT-1                    # esc, session kept
 kbots agents stop AGT-1                         # terminal killed, session kept
-kbots project watch                              # list watchers (none by default)
+Start the git bot and its watcher is auto-provisioned (enabled, defaults) the
+first time; an explicit `kbots project watch --project PRJ-1 --off` is kept and
+never overridden by auto-provision. Use the watcher commands to change timing:
+
+```sh
+kbots project watch                              # list watchers
 kbots project watch --project PRJ-1              # enable the file-change watcher
 kbots project watch --project PRJ-1 --off        # disable
+```
 ```
 
 With the watcher enabled, the daemon polls `git status` and, once the tree is

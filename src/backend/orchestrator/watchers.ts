@@ -4,7 +4,10 @@
  * delta once things are quiet and the agent is idle.
  *
  * Design notes:
- * - Opt-in per project; configured via RPC (CLI). Enabled rows live in SQLite.
+ * - Per project; rows live in SQLite. A watcher is auto-provisioned (enabled,
+ *   defaults) the first time a git agent is seen live without one; an
+ *   explicit `kbots prj watch --off` is kept — auto-provision never
+ *   overrides an existing row. Configure via RPC (CLI) any time.
  * - Debounce: we report only after the tree has been quiet for
  *   debounce_seconds — never mid-edit-storm.
  * - Cooldown: after delivering a prompt we suppress further deliveries for
@@ -23,6 +26,7 @@ import {
   addEvent,
   getProject,
   getProjectByPath,
+  getWatcher,
   listAgents,
   listEnabledWatchers,
   listWatchers,
@@ -126,6 +130,25 @@ export async function watchersSetHandler(params: Record<string, unknown>): Promi
   return watcherPayload(row)
 }
 
+/**
+ * Auto-provision: a live git agent with no watcher row gets a default
+ * enabled watcher. Only when the row is absent — an explicit `watchers.set`
+ * (e.g. `kbots prj watch --off`) always wins and is never overridden.
+ */
+function autoProvisionWatchers(): void {
+  for (const agent of listAgents()) {
+    if (agent.role !== "git" || !isLiveAgentStatus(agent.status)) continue
+    if (getWatcher(agent.projectId)) continue
+    const project = getProject(agent.projectId)
+    if (!project) continue
+    upsertWatcher({ projectId: agent.projectId, enabled: true })
+    addEvent("watch.auto_enabled", `Watcher for ${project.name} auto-enabled (git agent ${agent.id} live)`, {
+      projectId: agent.projectId,
+      agentId: agent.id,
+    })
+  }
+}
+
 const lastPollAt = new Map<string, number>()
 const lastDeferLogAt = new Map<string, number>()
 const lastAttemptAt = new Map<string, number>()
@@ -145,6 +168,11 @@ function buildPrompt(projectName: string, projectId: string, paths: string[], to
 
 async function tick(): Promise<void> {
   const now = Date.now()
+  try {
+    autoProvisionWatchers()
+  } catch (error) {
+    console.error(`kbots-daemon: watcher auto-provision failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
   for (const watcher of listEnabledWatchers()) {
     try {
       const lastPoll = lastPollAt.get(watcher.projectId) ?? 0
