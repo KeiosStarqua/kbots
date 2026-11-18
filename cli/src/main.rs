@@ -53,6 +53,7 @@ enum Commands {
         command: SessionCommands,
     },
     /// Register and inspect local projects.
+    #[command(visible_alias = "prj")]
     Project {
         #[command(subcommand)]
         command: ProjectCommands,
@@ -79,6 +80,7 @@ enum TaskCommands {
         project: Option<String>,
     },
     /// List tasks, optionally filtered by project.
+    #[command(visible_alias = "ls")]
     List {
         #[arg(long)]
         project: Option<String>,
@@ -92,6 +94,7 @@ enum TaskCommands {
 #[derive(Debug, Subcommand)]
 enum AgentCommands {
     /// List agent roles, active runs, and session identifiers.
+    #[command(visible_alias = "ls")]
     List {
         /// Only show this project (id, name, or path).
         #[arg(long)]
@@ -158,6 +161,7 @@ enum ProjectCommands {
         name: Option<String>,
     },
     /// List registered projects.
+    #[command(visible_alias = "ls")]
     List,
     /// Show a registered project by ID.
     Show { project_id: String },
