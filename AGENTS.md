@@ -41,6 +41,10 @@
 - Keep session inspection read-only and scope existing-session actions to the selected directory.
 - Keep operational and API details in `docs/opencode-control.md`.
 - Keep the GUI/TUI/CLI daemon transport contract in `docs/kbots-ipc.md`.
+- After completing and verifying a requested code change, stage only that task's
+  files, create one focused atomic commit, and push it to the current branch's
+  configured upstream without asking for confirmation. Never include unrelated
+  pre-existing changes in the commit.
 
 ## Verification
 
