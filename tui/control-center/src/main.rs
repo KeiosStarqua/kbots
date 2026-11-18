@@ -59,6 +59,10 @@ enum BgResult {
     TaskCreated(Result<rpc::TaskCreateResult, RpcError>),
     TaskMessaged(Result<rpc::TaskMessageResult, RpcError>),
     TaskUpdated(Result<rpc::TaskUpdateResult, RpcError>),
+    RouterRan {
+        result: Result<rpc::RouterRunResult, RpcError>,
+        original: String,
+    },
     TaskDetail(Box<TaskDetailPayload>),
 }
 
@@ -159,6 +163,14 @@ struct TaskDetailView {
     messages_error: Option<String>,
 }
 
+/// A pending "did you mean one of these tasks?" question from the router.
+/// Rendered in place of the composer note; `1`–`9` answer it, Esc dismisses.
+struct PendingAsk {
+    question: String,
+    candidates: Vec<rpc::RouterCandidate>,
+    original_text: String,
+}
+
 struct App {
     // navigation (kept from the original TUI)
     selected: usize,
@@ -189,6 +201,7 @@ struct App {
     composer_focused: bool,
     composer_text: String,
     composer_note: Option<(String, bool)>, // (text, is_error)
+    pending_ask: Option<PendingAsk>,
     overlay: Option<Overlay>,
     overlay_scroll: usize,
 }
@@ -223,6 +236,7 @@ impl App {
             composer_focused: false,
             composer_text: String::new(),
             composer_note: None,
+            pending_ask: None,
             overlay: None,
             overlay_scroll: 0,
         }
@@ -382,21 +396,101 @@ impl App {
             BgResult::TaskMessaged(result) => {
                 let note = match result {
                     Ok(sent) => {
-                        let via = sent
-                            .message_id
-                            .as_deref()
-                            .map(|id| format!(" (msg {})", truncate_chars(id, 10)))
-                            .unwrap_or_default();
-                        (
-                            format!("task {}: message {}{}", sent.task_id, sent.outcome, via),
-                            false,
-                        )
+                        if sent.outcome == "delivered" {
+                            let via = sent
+                                .message_id
+                                .as_deref()
+                                .map(|id| format!(" (msg {})", truncate_chars(id, 10)))
+                                .unwrap_or_default();
+                            (format!("Sent to CEO of {}{}", sent.task_id, via), false)
+                        } else {
+                            (format!("Queued for {} (CEO busy)", sent.task_id), false)
+                        }
                     }
                     Err(error) => (error_note(&error), true),
                 };
                 self.composer_note = Some(note);
                 self.request_refresh();
             }
+            BgResult::RouterRan { result, original } => match result {
+                Err(error) => {
+                    self.composer_note = Some((error_note(&error), true));
+                    self.pending_ask = None;
+                    self.request_refresh();
+                }
+                Ok(run) => match run.outcome.kind.as_str() {
+                    "created" => {
+                        let task_id = run.outcome.task_id.clone().unwrap_or_default();
+                        let note = match run
+                            .outcome
+                            .dispatch_error
+                            .as_deref()
+                            .filter(|err| !err.is_empty())
+                        {
+                            Some(err) => (
+                                format!("Created {task_id} (dispatch failed: {err})"),
+                                true,
+                            ),
+                            None => (format!("Created {task_id}"), false),
+                        };
+                        self.composer_note = Some(note);
+                        self.pending_ask = None;
+                        self.request_refresh();
+                    }
+                    "continued" => {
+                        let task_id = run.outcome.task_id.clone().unwrap_or_default();
+                        let note = if run.outcome.outcome.as_deref() == Some("delivered") {
+                            format!("Sent to CEO of {task_id}")
+                        } else {
+                            format!("Queued for {task_id} (CEO busy)")
+                        };
+                        self.composer_note = Some((note, false));
+                        self.pending_ask = None;
+                        self.request_refresh();
+                    }
+                    "ask_user" => {
+                        // Prefer the titled candidates; fall back to the ids
+                        // alone so the numbered answers stay usable.
+                        let mut candidates = run.outcome.candidates.clone();
+                        if candidates.is_empty() {
+                            candidates = run
+                                .outcome
+                                .candidate_task_ids
+                                .iter()
+                                .map(|task_id| rpc::RouterCandidate {
+                                    task_id: task_id.clone(),
+                                    title: String::new(),
+                                })
+                                .collect();
+                        }
+                        let question = run
+                            .outcome
+                            .question
+                            .clone()
+                            .unwrap_or_else(|| "Which task?".to_string());
+                        self.pending_ask = Some(PendingAsk {
+                            question,
+                            candidates,
+                            original_text: original,
+                        });
+                        self.composer_note = None;
+                    }
+                    "dry_run" => {
+                        self.composer_note = Some((
+                            format!(
+                                "dry-run: {} (confidence {:.2})",
+                                run.decision.action, run.decision.confidence
+                            ),
+                            false,
+                        ));
+                        self.pending_ask = None;
+                    }
+                    other => {
+                        self.composer_note = Some((format!("router: {other}"), true));
+                        self.pending_ask = None;
+                    }
+                },
+            },
             BgResult::TaskUpdated(result) => {
                 let note = match result {
                     Ok(updated) => (
@@ -551,6 +645,7 @@ impl App {
         }
         self.composer_text.clear();
         self.composer_focused = false;
+        self.pending_ask = None;
 
         if let Some(rest) = text.strip_prefix('@') {
             match parse_indexed_command(rest) {
@@ -582,10 +677,15 @@ impl App {
             return;
         }
 
-        // Plain text → create a task.
-        let note_task = truncate_chars(&text, 40);
-        self.composer_note = Some((format!("creating “{note_task}”…"), false));
-        self.spawn_bg(move |client| BgResult::TaskCreated(client.tasks_create(&text)));
+        // Plain text → natural-language task router.
+        let project = self.current_project_ref();
+        let note_router = truncate_chars(&text, 40);
+        self.composer_note = Some((format!("routing “{note_router}”…"), false));
+        let original = text.clone();
+        self.spawn_bg(move |client| BgResult::RouterRan {
+            result: client.router_run(project.as_deref(), &text),
+            original,
+        });
     }
 
     fn task_for_index(&self, n: usize) -> Option<String> {
@@ -593,6 +693,36 @@ impl App {
             return None;
         }
         self.tasks.get(n - 1).map(|task| task.task_id.clone())
+    }
+
+    /// Best-effort project for the composer's natural-language router call:
+    /// the registered project whose path contains the current working
+    /// directory (longest path wins). Returns the project id, or None when
+    /// nothing matches — the daemon then falls back to single-project mode
+    /// or asks which project is meant.
+    fn current_project_ref(&self) -> Option<String> {
+        let cwd = std::env::current_dir().ok()?;
+        let mut seen = std::collections::HashSet::new();
+        let mut best: Option<(usize, String)> = None;
+        for item in &self.agents.items {
+            let Some(project_id) = item.project_id.clone().filter(|id| !id.is_empty()) else {
+                continue;
+            };
+            if !seen.insert(project_id.clone()) {
+                continue;
+            }
+            if item.project_path.is_empty() {
+                continue;
+            }
+            let path = std::path::Path::new(&item.project_path);
+            if cwd.starts_with(path) {
+                let depth = path.components().count();
+                if best.as_ref().is_none_or(|(best_depth, _)| depth > *best_depth) {
+                    best = Some((depth, project_id));
+                }
+            }
+        }
+        best.map(|(_, project_id)| project_id)
     }
 
     fn handle_slash_command(&mut self, command: &str) {
@@ -858,6 +988,37 @@ impl App {
             return false;
         }
 
+        if self.pending_ask.is_some() {
+            match code {
+                KeyCode::Char('1'..='9') => {
+                    let index = match code {
+                        KeyCode::Char(number) => (number as usize) - ('1' as usize),
+                        _ => return false,
+                    };
+                    if let Some(ask) = self.pending_ask.take() {
+                        if index < ask.candidates.len() {
+                            let task_id = ask.candidates[index].task_id.clone();
+                            let message = ask.original_text.clone();
+                            self.composer_note =
+                                Some((format!("sending to {task_id}…"), false));
+                            self.spawn_bg(move |client| {
+                                BgResult::TaskMessaged(client.tasks_message(&task_id, &message))
+                            });
+                        } else {
+                            self.pending_ask = Some(ask);
+                        }
+                    }
+                    return false;
+                }
+                // Dismiss the question; do NOT quit.
+                KeyCode::Esc => {
+                    self.pending_ask = None;
+                    return false;
+                }
+                _ => {} // fall through to normal bindings
+            }
+        }
+
         match code {
             KeyCode::Char('q') | KeyCode::Esc => return true,
             KeyCode::Down | KeyCode::Char('j') => {
@@ -1113,7 +1274,12 @@ fn main() -> io::Result<()> {
 fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
     let banner = disconnected_banner(app);
-    let note_visible = app.composer_note.is_some();
+    let note_visible = app.pending_ask.is_some() || app.composer_note.is_some();
+    let note_height = app
+        .pending_ask
+        .as_ref()
+        .map(|ask| 2 + ask.candidates.len() as u16)
+        .unwrap_or(1);
 
     let mut constraints = vec![Constraint::Length(3)];
     if banner.is_some() {
@@ -1122,7 +1288,7 @@ fn render(frame: &mut Frame, app: &App) {
     constraints.push(Constraint::Min(0)); // body
     constraints.push(Constraint::Length(1)); // composer
     if note_visible {
-        constraints.push(Constraint::Length(1)); // action note
+        constraints.push(Constraint::Length(note_height)); // action note / pending ask
     }
     constraints.push(Constraint::Length(1)); // footer
 
@@ -1143,7 +1309,11 @@ fn render(frame: &mut Frame, app: &App) {
     render_composer(frame, sections[index], app);
     index += 1;
     if note_visible {
-        render_note(frame, sections[index], app);
+        if let Some(ask) = &app.pending_ask {
+            render_pending_ask(frame, sections[index], ask);
+        } else {
+            render_note(frame, sections[index], app);
+        }
         index += 1;
     }
     render_footer(frame, sections[index], app);
@@ -2194,6 +2364,33 @@ fn render_note(frame: &mut Frame, area: Rect, app: &App) {
         Style::default().fg(Color::LightGreen)
     };
     frame.render_widget(Paragraph::new(Line::from(Span::styled(format!(" {text}"), style))), area);
+}
+
+fn render_pending_ask(frame: &mut Frame, area: Rect, ask: &PendingAsk) {
+    let mut lines = Vec::with_capacity(2 + ask.candidates.len());
+    lines.push(Line::from(Span::styled(
+        format!(" {}", ask.question),
+        Style::default().fg(Color::Yellow),
+    )));
+    for (index, candidate) in ask.candidates.iter().enumerate() {
+        lines.push(Line::from(vec![
+            Span::styled(format!("   {}) ", index + 1), Style::default().fg(Color::Yellow)),
+            Span::styled(
+                candidate.task_id.clone(),
+                Style::default().fg(Color::White).bold(),
+            ),
+            Span::styled(" · ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                truncate_chars(&candidate.title, 60),
+                Style::default().fg(Color::White),
+            ),
+        ]));
+    }
+    lines.push(Line::from(Span::styled(
+        "   press <n> to send to that task · Esc to dismiss · or retype with @TASK-id",
+        Style::default().fg(Color::DarkGray),
+    )));
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 fn render_footer(frame: &mut Frame, area: Rect, app: &App) {

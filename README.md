@@ -209,6 +209,20 @@ schedule may start another run later.
 `--list-sessions` cannot be combined with session actions. `--interrupt`
 requires `--session` and cannot be combined with `--prompt`.
 
+## AI router (natural language routing)
+
+The composer accepts plain natural language: the client sends it to the
+daemon's `router.run` method, which decides where the request goes. The
+router is a thin proposal layer — it never calls agents directly. Confident
+`create_task` / `continue_task` decisions execute through the same paths as
+`tasks.create` and `tasks.message`, so dispatch caps, queued-message
+semantics and approvals apply unchanged. An explicit `@TASK-id` reference
+(or a selected task) routes deterministically without any AI call. When the
+router is unsure it returns `ask_user` with a short question and candidate
+tasks instead of acting; nothing is created, messaged, or dispatched in that
+case. The CLI is unchanged; this is local inference, not a guarantee of
+model quality — treat routing as a convenience, not an authority.
+
 ## Configuration and data handling
 
 | Setting | Used by | Default |
@@ -216,6 +230,7 @@ requires `--session` and cannot be combined with `--prompt`.
 | `OPENCODE_MODEL` | `smoke` | `opencode/inkling-2-small-free` |
 | `OPENCODE_DB_PATH` | `smoke` | Path from `opencode debug paths db` |
 | `KBOTS_CEO_CAP` | Daemon | Per-project active-CEO dispatch cap; defaults to 4 |
+| `KBOTS_ROUTER_MIN_CONFIDENCE` | Daemon | Minimum router confidence for auto-execution; defaults to 0.65 |
 | `KBOTS_SOCKET` | CLI, GUI, TUI | Overrides the default daemon socket |
 | `--model` | `control` new sessions | Service default |
 | `--directory` | `control` | Current directory |

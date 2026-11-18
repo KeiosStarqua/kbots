@@ -14,9 +14,14 @@ pending Approvals, and the Activity log (`events.list`, newest first). It
 polls every 5 seconds only while running, renders only on input or data
 change, shows a persistent `daemon unreachable` banner (with inline errors
 everywhere else) when the socket is gone, and keeps last-good data on
-mid-session failures. A bottom composer creates tasks from plain text, routes
-`@N <text>` to task N's CEO (`tasks.message`), and implements `/brief`,
-`/inbox`, `/tasks`, `/done N` and `/blocked N`. v2 daemon methods missing
+mid-session failures. A bottom composer routes plain text through the
+daemon's natural-language router (`router.run`): a clear request creates a
+task ("Created <id>"), a clear follow-up goes to that task's CEO ("Sent to
+CEO of <id>" / "Queued for <id> (CEO busy)"), and an ambiguous one shows the
+router's question with numbered candidates (press 1–9 to send, Esc to
+dismiss, or retype with `@TASK-id`). `@N <text>` still messages task N
+directly, and `/brief`, `/inbox`, `/tasks`, `/done N` and `/blocked N`
+work as before. v2 daemon methods missing
 from the running daemon surface as `daemon not updated yet`, never a crash.
 Section navigation supports arrows, `h/j/k/l`, `n/p`, and `1`–`6`. It also
 supports Moshi-style gesture chords using the default `Ctrl+B` prefix: `n/p`

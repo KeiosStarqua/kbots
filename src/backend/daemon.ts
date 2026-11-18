@@ -31,6 +31,7 @@ import {
   tasksBriefHandler,
   tasksInboxHandler,
 } from "./orchestrator/tasks.ts"
+import { routeRequest } from "./orchestrator/router.ts"
 import { listApprovalsHandler, approveApprovalHandler } from "./orchestrator/approvals.ts"
 import { listEventsHandler } from "./orchestrator/events.ts"
 import { systemStatusHandler, DAEMON_NAME } from "./orchestrator/system.ts"
@@ -52,6 +53,7 @@ import {
 
 const MAX_REQUEST_BYTES = 1024 * 1024
 const SOCKET_TIMEOUT_MS = 10_000
+const ROUTER_SOCKET_TIMEOUT_MS = 120_000
 
 type Handler = (params: Record<string, unknown>) => Promise<unknown>
 
@@ -88,6 +90,7 @@ function buildHandlers(socket: string): Record<string, Handler> {
     "tasks.messages": tasksMessagesHandler,
     "tasks.brief": tasksBriefHandler,
     "tasks.inbox": tasksInboxHandler,
+    "router.run": routeRequest,
     "projects.register": registerProjectHandler,
     "projects.list": () => listProjectsHandler(),
     "projects.get": getProjectHandler,
@@ -146,6 +149,12 @@ async function handleConnection(socket: Socket, handlers: Record<string, Handler
         if (typeof method !== "string" || method.length === 0) {
           throw new RpcError(-32600, "invalid JSON-RPC method")
         }
+        // The router makes a bounded Codex turn (~90 s timeout), so it gets
+        // a longer idle window; everything else keeps the default.
+        socket.setTimeout(
+          method === "router.run" ? ROUTER_SOCKET_TIMEOUT_MS : SOCKET_TIMEOUT_MS,
+          () => socket.destroy(),
+        )
         const params = request.params ?? {}
         if (!isRecord(params)) {
           throw new RpcError(-32602, "params must be an object")
