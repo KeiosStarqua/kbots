@@ -359,8 +359,6 @@ where
 #[serde(rename_all = "camelCase")]
 pub struct TaskBrief {
     #[serde(default)]
-    pub task_id: String,
-    #[serde(default)]
     pub title: String,
     #[serde(default)]
     pub status: String,

@@ -59,11 +59,13 @@ enum BgResult {
     TaskCreated(Result<rpc::TaskCreateResult, RpcError>),
     TaskMessaged(Result<rpc::TaskMessageResult, RpcError>),
     TaskUpdated(Result<rpc::TaskUpdateResult, RpcError>),
-    TaskDetail {
-        task_id: String,
-        brief: Result<TaskBrief, RpcError>,
-        messages: Result<Vec<TaskMessage>, RpcError>,
-    },
+    TaskDetail(Box<TaskDetailPayload>),
+}
+
+struct TaskDetailPayload {
+    task_id: String,
+    brief: Result<TaskBrief, RpcError>,
+    messages: Result<Vec<TaskMessage>, RpcError>,
 }
 
 fn fetch_snapshot(client: &RpcClient) -> Snapshot {
@@ -116,7 +118,10 @@ enum OverlayState<T> {
 enum Overlay {
     Brief { state: OverlayState<BriefView> },
     Inbox { state: OverlayState<Vec<InboxItem>>, selected: usize },
-    TaskDetail { state: OverlayState<TaskDetailView>, task_id: String },
+    TaskDetail {
+        state: Box<OverlayState<TaskDetailView>>,
+        task_id: String,
+    },
 }
 
 impl Overlay {
@@ -325,11 +330,12 @@ impl App {
                 self.overlay = Some(Overlay::Inbox { state, selected: 0 });
                 self.overlay_scroll = 0;
             }
-            BgResult::TaskDetail {
-                task_id,
-                brief,
-                messages,
-            } => {
+            BgResult::TaskDetail(payload) => {
+                let TaskDetailPayload {
+                    task_id,
+                    brief,
+                    messages,
+                } = *payload;
                 let still_open = matches!(
                     &self.overlay,
                     Some(Overlay::TaskDetail { task_id: open, .. }) if *open == task_id
@@ -347,7 +353,7 @@ impl App {
                         .map(|task| task.title.clone());
                     let view = build_task_detail(task_id.clone(), brief, messages, project, task_title);
                     self.overlay = Some(Overlay::TaskDetail {
-                        state: OverlayState::Ready(view),
+                        state: Box::new(OverlayState::Ready(view)),
                         task_id,
                     });
                     self.overlay_scroll = 0;
@@ -468,10 +474,10 @@ impl App {
                     state: OverlayState::Ready(items),
                     selected,
                 }) = &mut self.overlay
+                    && !items.is_empty()
+                    && *selected >= items.len()
                 {
-                    if !items.is_empty() && *selected >= items.len() {
-                        *selected = items.len() - 1;
-                    }
+                    *selected = items.len() - 1;
                 }
             }
             Err(error) => {
@@ -694,18 +700,18 @@ impl App {
 
     fn open_task_detail(&mut self, task_id: String) {
         self.overlay = Some(Overlay::TaskDetail {
-            state: OverlayState::Loading,
+            state: Box::new(OverlayState::Loading),
             task_id: task_id.clone(),
         });
         self.overlay_scroll = 0;
         self.spawn_bg(move |client| {
             let brief = client.tasks_brief_task(&task_id);
             let messages = client.tasks_messages(&task_id);
-            BgResult::TaskDetail {
+            BgResult::TaskDetail(Box::new(TaskDetailPayload {
                 task_id,
                 brief,
                 messages,
-            }
+            }))
         });
     }
 
@@ -2319,7 +2325,7 @@ fn render_overlay(frame: &mut Frame, area: Rect, app: &App) {
                 lines
             }
         },
-        Overlay::TaskDetail { state, .. } => match state {
+        Overlay::TaskDetail { state, .. } => match state.as_ref() {
             OverlayState::Loading => vec![loading_line("loading task", app.refreshing)],
             OverlayState::Failed(error) => failed_lines(error),
             OverlayState::Ready(view) => detail_lines(view, inner.width as usize),
