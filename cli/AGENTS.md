@@ -1,0 +1,33 @@
+# Automation CLI
+
+## Purpose
+
+- `kbots` is a Rust command-line client for automation. `kb` is a short alias `install.sh` links to it (`~/.local/bin/kb` → `kbots`). It exposes stable subcommands, then sends daemon-owned operations over a local Unix domain socket. It does not implement orchestration or bypass daemon-side authorization and idempotency checks. When stdout is a terminal, output is a human-readable rendering (tables and summaries); when stdout is piped — or `--json` is passed — output is pretty-printed JSON, so scripts keep a stable machine-readable contract.
+
+## Ownership
+
+- Owns this directory: the Cargo package (binary `kbots`), `src/`, and `templates/bots/{ceo,git,ops}/AGENTS.md` starter files used when seeding `.agents/bot/` role directories.
+- Does not own orchestration logic, workflow state, or session scheduling — those live in the Bun backend (`../src/backend/`).
+
+## Local Contracts
+
+- Daemon-owned operations go over the local Unix socket (JSON-RPC 2.0); the contract is `../docs/kbots-ipc.md`. The CLI is a client, not a bypass.
+- `project add` and `project configure` are local/direct OpenCode operations; everything else (tasks, agents, approvals) is daemon-owned.
+- `tasks update` moves a task only to `review`, `blocked`, `done`, `failed`, or `canceled`; the daemon validates the status and rejects terminal-state changes.
+- `tasks message TASK-ID TEXT` delivers a message to the task's CEO (or queues it when the CEO is busy); `tasks brief` and `tasks inbox` render daemon-generated summaries — never compute them client-side.
+- Stdout contract: human-readable on a TTY, pretty JSON when piped or `--json`. Keep both renderings in sync when adding subcommands.
+
+## Work Guidance
+
+- Command examples and subcommand behavior live in `README.md`; keep it updated when subcommands change.
+- Starter templates in `templates/bots/` seed new projects; edit them intentionally and keep them consistent with the manifest flow in the backend (`.agents/bot/kbots.json` → per-role `opencode.jsonc`).
+- Alias handling (`kb`, `ag`, `ls`, `prj`, `-p`) lives in argument parsing; preserve existing aliases — scripts depend on them.
+
+## Verification
+
+- `cargo check` (or `cargo build`) in this directory.
+- `./install.sh` from the repo root builds and installs the CLI alongside the other clients and deploys the daemon.
+
+## Child DOX Index
+
+None.
