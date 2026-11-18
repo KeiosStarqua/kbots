@@ -11,7 +11,11 @@ use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 
 #[derive(Debug, Parser)]
-#[command(version, about = "Automation CLI for the kbots coding workflow")]
+#[command(
+    name = "kbots",
+    version,
+    about = "Automation CLI for the kbots coding workflow"
+)]
 struct Cli {
     /// Override the daemon's Unix socket path (or set KBOTS_SOCKET).
     #[arg(long, global = true, value_name = "PATH")]
@@ -75,7 +79,7 @@ enum AgentCommands {
 
 fn main() {
     if let Err(error) = run(Cli::parse()) {
-        eprintln!("kbots-cli: {error}");
+        eprintln!("kbots: {error}");
         process::exit(1);
     }
 }

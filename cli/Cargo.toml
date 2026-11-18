@@ -1,10 +1,10 @@
 [package]
-name = "kbots-cli"
+name = "kbots"
 version = "0.1.0"
 edition = "2024"
 
 [[bin]]
-name = "kbots-cli"
+name = "kbots"
 path = "src/main.rs"
 
 [dependencies]

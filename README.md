@@ -22,7 +22,7 @@ desktop client in `gui/control-center/` and the Rust/Ratatui terminal client in
 `tui/control-center/`. Both interfaces will connect to one Bun daemon. The
 dashboards include navigation, project/task/agent/approval summaries, agent
 activity, a task queue, and recent events. Displayed values are demo data; the
-interfaces do not yet connect to a daemon. The `kbots-cli` automation entry
+interfaces do not yet connect to a daemon. The `kbots` automation entry
 point is in `cli/` and uses the planned JSON-RPC socket contract.
 
 After completing application changes, install the latest GUI, TUI, and CLI
@@ -32,7 +32,9 @@ binaries and verify the TypeScript backend with:
 ./install.sh
 ```
 
-The installer uses `~/.local/bin` by default. Set `KBOTS_INSTALL_DIR` to use a
+The installer adds a desktop launcher at
+`${XDG_DATA_HOME:-$HOME/.local/share}/applications/kbots.desktop` and uses
+`~/.local/bin` for binaries by default. Set `KBOTS_INSTALL_DIR` to use a
 different destination, for example `KBOTS_INSTALL_DIR="$HOME/bin" ./install.sh`.
 It does not use `sudo`. The Bun daemon remains a source package because its
 daemon executable has not been implemented yet.

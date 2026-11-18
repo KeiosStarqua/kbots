@@ -1,6 +1,6 @@
 # Automation CLI
 
-`kbots-cli` is a Rust command-line client for automation. It exposes stable
+`kbots` is a Rust command-line client for automation. It exposes stable
 subcommands and JSON output, then sends daemon-owned operations over a local
 Unix domain socket. It does not implement orchestration or bypass daemon-side
 authorization and idempotency checks.
@@ -8,14 +8,14 @@ authorization and idempotency checks.
 Examples:
 
 ```sh
-kbots-cli status
-kbots-cli tasks add "Implement authentication" --project api-service
-kbots-cli tasks list --project api-service
-kbots-cli tasks show TASK-104
-kbots-cli agents list
-kbots-cli approve DEPLOY-23
-kbots-cli tui
-kbots-cli gui
+kbots status
+kbots tasks add "Implement authentication" --project api-service
+kbots tasks list --project api-service
+kbots tasks show TASK-104
+kbots agents list
+kbots approve DEPLOY-23
+kbots tui
+kbots gui
 ```
 
 Use `--socket PATH` or `KBOTS_SOCKET` to select the daemon socket. By default,

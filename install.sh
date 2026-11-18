@@ -32,13 +32,33 @@ install -m 755 \
   "${repo_root}/tui/control-center/target/release/kbots-tui" \
   "${install_dir}/kbots-tui"
 install -m 755 \
-  "${repo_root}/cli/target/release/kbots-cli" \
-  "${install_dir}/kbots-cli"
+  "${repo_root}/cli/target/release/kbots" \
+  "${install_dir}/kbots"
 
-printf '\nInstalled commands:\n  %s\n  %s\n  %s\n' \
+rm -f "${install_dir}/kbots-cli"
+
+desktop_dir="${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
+desktop_file="${desktop_dir}/kbots.desktop"
+desktop_exec="${install_dir}/kbots-gui"
+desktop_exec="${desktop_exec//\\/\\\\}"
+desktop_exec="${desktop_exec//\"/\\\"}"
+desktop_exec="${desktop_exec//\`/\\\`}"
+desktop_exec="${desktop_exec//\$/\\\$}"
+mkdir -p "${desktop_dir}"
+while IFS= read -r line || [[ -n "${line}" ]]; do
+  if [[ "${line}" == 'Exec=@KBOTS_GUI_EXEC@' ]]; then
+    printf 'Exec="%s"\n' "${desktop_exec}"
+  else
+    printf '%s\n' "${line}"
+  fi
+done < "${repo_root}/gui/kbots.desktop.in" > "${desktop_file}"
+chmod 644 "${desktop_file}"
+
+printf '\nInstalled commands:\n  %s\n  %s\n  %s\nDesktop launcher:\n  %s\n' \
   "${install_dir}/kbots-gui" \
   "${install_dir}/kbots-tui" \
-  "${install_dir}/kbots-cli"
+  "${install_dir}/kbots" \
+  "${desktop_file}"
 
 case ":${PATH}:" in
   *":${install_dir}:"*) ;;
