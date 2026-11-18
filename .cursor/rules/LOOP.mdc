@@ -1,0 +1,188 @@
+---
+alwaysApply: true
+---
+
+### Loop Engineering — vòng giao tính năng
+
+Hình dạng vòng chuẩn:
+
+```text
+Quan sát → Chọn việc → Lập kế hoạch → Triển khai → Kiểm chứng
+         → Review → Học → Đóng vòng → Lặp lại hoặc Dừng
+```
+
+### Cấu hình repo (`.cursor/loop.jsonc`)
+
+**Tracker** là hệ thống quản lý issue của vòng này: **itsaplan** (khóa `issueTracker`, mặc định `linear`). Tài liệu này viết trung lập: "tracker" = itsaplan; mọi thao tác cụ thể (tool, cách đổi status) nằm ở **Tool theo tracker** trong phần **Quản lý việc**.
+
+Một repo có thể gắn **nhiều** project của tracker (`projects`: mảng `name`, `url`, `id`). Đúng một phần tử có thể mang `"default": true` — project tạo issue mới khi chưa xác định được project. Nếu không phần tử nào đánh dấu, phần tử đầu tiên là mặc định. Bảng project nằm ở **Tracker (issue kỹ thuật nguyên tử)**.
+
+Giá trị `forceMergePr` của repo này: **`true`**. Khóa này điều khiển auto-merge pull/merge request trong vòng (`ce-plan`, `ce-work`, `ce-compound`):
+
+| Giá trị | Hành vi |
+|---------|---------|
+| `true` (mặc định) | Sau khi tạo PR/MR và xác nhận không conflict với `main`, agent **bắt buộc auto-merge** vào `main`, rồi xóa nhánh head. |
+| `false` | Agent **chỉ tạo** PR/MR và gắn URL vào tracker; **không** auto-merge — chờ owner/reviewer merge tay. Các bước phụ thuộc PR merged (ví dụ bước Triển khai kiểm tra plan) vẫn áp dụng. |
+
+Mọi chỗ nói auto-merge trong tài liệu này tuân giá trị ở **Cấu hình repo** — xem **Quy tắc chung — auto-merge PR**.
+
+**Ánh xạ status.** Tài liệu này gọi status theo tên logic của vòng (`Plan`, `Todo`, `In Progress`, `In Review`, `Compound`, `Done`). Khi gọi tracker, luôn đổi sang tên thực tế của repo này (khóa `statuses`):
+
+| Status trong vòng | Tên thực tế trong tracker |
+|-------------------|---------------------------|
+| `Plan` | `Plan` |
+| `Todo` | `Todo` |
+| `In Progress` | `In Progress` |
+| `In Review` | `In Review` |
+| `Compound` | `Compound` |
+| `Done` | `Done` |
+
+Luồng của vòng trên repo này:
+
+```text
+Tracker itsaplan (issue kỹ thuật nguyên tử — nguồn sự thật)
+    ↓ agent Project của Cursor: chọn issue → status Plan → ce-plan
+docs/plans/ + auto-merge PR của plan + xóa nhánh PR plan + comment tracker cho owner + status → In Progress
+    ↓ agent Project của Cursor: kiểm tra PR plan đã merge trên Git/tracker chưa (nếu chưa → stop & status Todo; nếu rồi → ce-work) → PR/MR + auto-merge PR của ce-work + xóa nhánh PR ce-work + status In Review
+Đóng vòng sau review (bắt buộc — thuộc “xong”)
+    → đánh dấu Definition of Done trên plan
+    → tracker → Compound + comment cho owner
+    ↓ agent Project: status → Compound → Compound (ce-compound) → PR/MR + auto-merge PR của ce-compound + xóa nhánh PR ce-compound + gắn URL tracker (nếu có thay đổi) + status Done; dọn mọi nhánh PR đã merge còn sót (plan / ce-work / ce-compound)
+Lặp issue tracker tiếp theo
+```
+
+**Ai chạy bước nào:**
+
+- **agent Project của Cursor** điều khiển vòng: chọn việc, lập kế hoạch (`ce-plan`), triển khai (`ce-work`), kiểm chứng, đóng vòng và đổi status trên tracker. Status `Plan` / `In Progress` / `In Review` chỉ phản ánh tiến độ — **không** kích hoạt automation nào.
+- **agent Project** cũng chạy bước **Compound** (`ce-compound`) ngay sau khi chuyển status → **`Compound`** — repo này không có trigger ngoài cho bước đó (`compoundRunner` = `agent`).
+
+**Các bước:**
+
+1. **Lập kế hoạch (agent Project)** — chuyển status → **`Plan`**; báo tracker đã bắt đầu; kiểm tra plan đã tồn tại chưa (tránh tạo trùng); chạy **`ce-plan`**; nếu có PR/MR chứa plan thì kiểm tra/resolve conflict với `main`, auto-merge PR vào nhánh chính (`main`), **xóa nhánh head của PR plan trên remote** (xem **Quy tắc chung — xóa nhánh sau merge PR**), và gắn URL PR/MR vào tracker; **sau khi** plan đã gắn tracker và PR của plan đã merge (nếu có) thì đổi status → **`In Progress`** rồi sang bước Triển khai.
+2. **Triển khai (agent Project)** — status **`In Progress`**: báo tracker đã bắt đầu; kiểm tra trên Git provider (GitHub/GitLab) và trên tracker xem plan của task / PR của plan đã được merge chưa — nếu chưa thì **stop**, chuyển status issue trên tracker về **`Todo`** và comment nêu rõ lý do; nếu đã merge thì chạy **`ce-work`** theo plan gắn issue; nếu có PR/MR thì kiểm tra/resolve conflict với `main`, auto-merge PR vào nhánh chính (`main`), **xóa nhánh head của PR ce-work trên remote**, và gắn URL PR/MR vào tracker; đổi status → **`In Review`** khi xong.
+3. **Compound (agent Project)** — status → **`Compound`**: chạy **`ce-compound`** để ghi lại learning/DOX của issue vừa đóng vòng; nếu có thay đổi thì bắt buộc tạo pull/merge request, kiểm tra/resolve conflict với `main`, auto-merge PR vào nhánh chính (`main`), **xóa nhánh head của PR ce-compound trên remote**, và gắn URL PR/MR vào tracker; **dọn nhánh** — xóa mọi nhánh head của PR plan / ce-work / ce-compound đã merge còn sót trên remote (xem **Quy tắc chung — xóa nhánh sau merge PR**); sau khi merge PR của ce-compound (hoặc ngay nếu không có thay đổi) đổi status → **`Done`**.
+
+**Quy tắc chung — gắn URL PR/MR (bắt buộc):** bất kỳ bước nào tạo pull/merge request (dù là `ce-plan`, `ce-work`, `ce-compound`; do agent Project, bước Compound, hay chạy tay) đều **phải** gắn URL PR/MR đó vào issue tracker liên quan ngay khi tạo — không chờ tới bước tổng kết mới gắn.
+
+**Quy tắc chung — auto-merge PR (theo cấu hình):** đọc giá trị `forceMergePr` của repo này (**`true`**; mặc định `true` nếu thiếu trong `.cursor/loop.jsonc`).
+
+- **Khi `true`:** sau khi tạo PR/MR và kiểm tra/resolve conflict với `main`, agent **bắt buộc auto-merge** vào `main`, rồi xóa nhánh head (xem **Quy tắc chung — xóa nhánh sau merge PR**). Áp dụng cho PR của `ce-plan`, `ce-work` và `ce-compound`.
+- **Khi `false`:** agent **không** auto-merge; chỉ gắn URL PR/MR vào tracker và comment trạng thái chờ review. Owner merge tay trước khi các bước phụ thuộc merged PR có thể tiếp tục. **Không** xóa nhánh head cho đến khi PR đã merge.
+
+**Quy tắc chung — xóa nhánh sau merge PR (bắt buộc):** ngay **sau khi** pull/merge request đã merge vào nhánh chính (`main`), agent **phải xóa nhánh head của PR đó trên remote** — không để nhánh feature tồn đọng sau merge. Chỉ áp dụng khi PR đã merge (tự merge hoặc owner merge tay).
+
+- **GitHub:** ưu tiên merge kèm xóa nhánh: `gh pr merge <n> --merge --delete-branch` (hoặc `--squash` / `--rebase` theo convention repo). Nếu PR đã merge sẵn: `git push origin --delete <head-branch>` hoặc `gh api -X DELETE repos/{owner}/{repo}/git/refs/heads/{head-branch}`.
+- **GitLab:** merge MR với **Remove source branch** bật, hoặc API tương đương sau merge.
+- **An toàn:** chỉ xóa nhánh head của PR vừa merge do agent Project / bước Compound tạo hoặc push được; **không** xóa nhánh default (`main` / `master`); **không** xóa nhánh của người khác hay PR chưa merge.
+- **Thứ tự:** merge PR → xóa nhánh head → bước tiếp theo (comment tracker, đổi status, v.v.).
+
+**Sau khi `ce-plan` xong** (agent Project hoặc chạy tay), nếu có PR tạo bởi bước lập kế hoạch thì khi auto-merge bật (xem **Cấu hình repo**) agent **phải auto-merge PR của plan vào `main`**, comment tracker theo **Thông báo hoàn thành của agent**, rồi **đổi status → `In Progress`** — xem **Quy trình vòng sau `ce-plan`**. Khi auto-merge tắt, chỉ gắn URL PR và comment chờ owner merge trước khi chuyển `In Progress`. Ưu tiên bám plan đã gắn issue; không mở đường lập kế hoạch song song.
+
+Một đặc tả vòng nên có ít nhất: Trigger, Goal, Available context, Permitted actions, Verification, Failure handling, Memory update, Stopping conditions.
+
+Trạng thái kết thúc (mỗi lần chạy kết thúc đúng một):
+
+- `COMPLETE`
+- `BLOCKED`
+- `FAILED_VERIFICATION`
+- `NEEDS_HUMAN_DECISION`
+- `BUDGET_EXHAUSTED`
+
+Chỉ `COMPLETE` khi: acceptance criteria có bằng chứng; các check bắt buộc pass; không còn thay đổi không giải thích được; docs đã cập nhật khi cần; đóng vòng tracking đã xong.
+
+### Thông báo hoàn thành của agent (bắt buộc)
+
+Khi agent xong việc có ý nghĩa (task/issue xong, owner cần xem kết quả, hoặc user yêu cầu báo cáo), thông báo qua tracker:
+
+1. **Tracker (itsaplan)** — trên issue kỹ thuật liên quan: comment (có thể ghi `taquangkhoi`), và/hoặc gán lại issue cho owner. Tool cụ thể: xem **Tool theo tracker**. Ngôn ngữ comment: **tiếng Việt 100%**. Comment ngắn: việc gì xong, kết quả/link chính, bước tiếp theo nếu có.
+
+Không chỉ nhắc trong Cursor chat. Nếu chưa có issue phù hợp trên tracker, tạo issue ngắn trong project mặc định **`kbots`** (hoặc trong project khác ở bảng bên dưới nếu việc thuộc rõ project đó), rồi comment + (tùy chọn) assign.
+
+### Quy trình vòng sau `ce-plan` (bắt buộc)
+
+Khi skill **`ce-plan`** (do agent Project chạy hoặc chạy tay) **đã tạo/cập nhật plan** dưới `docs/plans/`, agent **không** dừng ở Cursor chat. Báo cáo lập kế hoạch và auto-merge PR plan là một phần của “xong plan”:
+
+1. **Plan ↔ tracker** — đảm bảo đường dẫn plan đã ghi vào mô tả issue trên tracker và frontmatter/section plan có `itsaplan_issues:` (xem **Plan ↔ issue** bên dưới).
+2. **Auto-merge PR của plan** — nếu bước `ce-plan` tạo PR/MR chứa file plan (hoặc commit trên branch riêng) và auto-merge bật (xem **Cấu hình repo**), agent **bắt buộc tự động merge (auto-merge)** pull/merge request đó vào nhánh chính (`main`) sau khi kiểm tra không có conflict, gắn URL PR/MR vào tracker, rồi **xóa nhánh head của PR plan trên remote** (xem **Quy tắc chung — xóa nhánh sau merge PR**). Khi auto-merge tắt, chỉ gắn URL PR/MR và comment chờ owner merge.
+3. **Thông báo** — chạy **Thông báo hoàn thành của agent** (comment tracker): plan nào vừa tạo/cập nhật (path), issue liên quan, trạng thái merge PR của plan, tóm tắt hướng triển khai / bước tiếp (status → `In Progress` → `ce-work`).
+4. **Status → In Progress** — sau khi đã gắn plan↔issue, auto-merge PR của plan (nếu có), và comment tracker: đổi status → **`In Progress`**. Đổi status **sau** merge để bước kiểm tra tiên quyết của `ce-work` không stop về `Todo`. Sau đó agent Project tiếp tục **Quy trình vòng `ce-work`** — status không kích hoạt automation nào.
+
+Không chỉ nhắc trong Cursor chat. Áp dụng cả khi `ce-plan` do agent Project chạy lẫn chạy tay.
+
+### Quy trình vòng `ce-work` (bắt buộc)
+
+1. **Kiểm tra điều kiện tiên quyết (trước khi triển khai):**
+   - Khi agent Project (hoặc người chạy tay) bắt đầu công đoạn `ce-work` cho issue ở status `In Progress`, agent **bắt buộc kiểm tra trên Git provider (GitHub/GitLab) và trên tracker** xem plan của task đã được merge chưa (PR/MR chứa plan đã merge vào nhánh chính chưa).
+   - **Nếu plan / PR của plan chưa được merge:** agent **phải dừng lại (`stop`)**, chuyển status của issue trên tracker về **`Todo`**, và gửi comment tiếng Việt trên tracker nêu rõ PR của plan chưa được merge, cần merge trước khi chuyển sang `In Progress`.
+   - **Nếu plan / PR của plan đã merge:** tiếp tục các bước triển khai theo plan gắn issue.
+
+2. **Khi đã kiểm chứng và hoàn tất phạm vi plan:**
+   - **Plan (`docs/plans/…`)** — đánh dấu **Definition of Done** (và checkbox unit liên quan nếu có) thành `[x]` khi đã có bằng chứng (build/smoke/commit). Thêm ghi chú smoke/verify ngắn nếu plan còn chỗ trống. *Trong lúc* `ce-work`, vẫn không dùng plan làm task tracker giữa chừng; *sau khi* hoàn tất, **phải** tick DoD — đóng vòng repo này ghi đè hướng dẫn skill chung “đừng sửa thân plan”.
+   - **Auto-merge PR của `ce-work`** — nếu bước `ce-work` tạo PR/MR (hoặc commit trên branch riêng) và auto-merge bật (xem **Cấu hình repo**), agent **bắt buộc tự động merge (auto-merge)** pull/merge request đó vào nhánh chính (`main`) sau khi kiểm tra không có conflict, gắn URL PR/MR vào tracker, rồi **xóa nhánh head của PR ce-work trên remote** (xem **Quy tắc chung — xóa nhánh sau merge PR**). Khi auto-merge tắt, chỉ gắn URL PR/MR và comment chờ review.
+   - **Tracker** — gắn URL PR/MR vào issue; đổi status → **`In Review`** (không nhảy thẳng Compound). Comment tiếng Việt: đã ship gì, link PR/MR, trạng thái auto-merge, chờ review/đóng vòng.
+   - **Đóng vòng sau review** — khi PR/MR đã merge / owner duyệt xong: đổi status → **`Compound`** + comment. **Không** chỉ nhờ owner tự đóng issue nếu agent Project đang ở session đóng vòng. Không có automation nào bắt status `Compound` trên repo này, nên agent Project tiếp tục chạy **`ce-compound`** (bước 3 của **Các bước**) ngay sau khi đổi status.
+   - **Thông báo** — chạy **Thông báo hoàn thành của agent** (comment tracker) sau khi tạo PR/MR, auto-merge và chuyển `In Review` (và sau khi chuyển `Compound` nếu có).
+
+Cũng áp dụng khi plan đã ship ở session trước nhưng DoD/tracker còn mở: nếu agent thấy lệch, hoàn tất đóng vòng — không để Backlog + checkbox trống.
+
+### Quản lý việc
+
+**Tracker (itsaplan)** là nguồn sự thật cho issue triển khai đang chạy và backlog kỹ thuật của vòng này. **Không** nhân bản toàn bộ backlog vào git.
+
+#### Tracker (issue kỹ thuật nguyên tử)
+
+| Trường | Giá trị |
+|--------|---------|
+| Tracker | **itsaplan** |
+| Workspace / team | **`itsaplan`** |
+
+Chọn việc trên **tất cả** project trong bảng. Tạo issue mới ở project **mặc định**, trừ khi việc thuộc rõ một project khác trong bảng:
+
+| Project | URL | Key | Vai trò |
+| --- | --- | --- | --- |
+| kbots | - | `KBOTS` | mặc định |
+
+**Ngôn ngữ (bắt buộc cho setup này)**
+- Toàn bộ chữ trên tracker **tiếng Việt 100%**: title, description, comment, acceptance, ghi chú. Giữ nguyên identifier file/path/tech khi trích dẫn.
+
+**Tool theo tracker**
+
+Dùng itsaplan MCP ([croffasia/itsaplan](https://github.com/croffasia/itsaplan)). Cột `Key` trong bảng project là **project key** (ví dụ `MKT`), truyền vào tham số `projectKey`. Hầu hết tool nhận **id số** của issue; từ mã `KEY-42` lấy id bằng `get_issue_by_number`.
+
+| Thao tác | Tool |
+|----------|------|
+| Resolve cột / thành viên | `get_project` (`projectKey`) → `columns` (id, tên, `stateType`), `assignees`. Gọi một lần mỗi project rồi dùng lại |
+| Liệt kê issue | `list_issues` (`projectKey`, lọc `columnId`, `priority`, `dueFrom`/`dueTo`), hoặc `search_issues` |
+| Chi tiết / acceptance | `get_issue` (id số) hoặc `get_issue_by_number` (`projectKey`, số của `KEY-n`) |
+| Đổi status | `update_issue` với `columnId` của cột đã ánh xạ |
+| Gán lại cho owner | `update_issue` với `assigneeUserId` (id owner từ `get_project.assignees` hoặc `get_current_user`) |
+| Comment | `add_comment` (`issueId`, `body`); `@username` trong body sẽ thông báo cho thành viên đó |
+| Tạo issue | `create_issue` (`projectKey`, `columnId`, `title`, `description`) trong project mặc định |
+| Gắn URL PR/MR / path plan | `add_comment`, và thêm vào cuối `description` bằng `update_issue` (đọc `description` hiện tại trước, giữ nguyên phần cũ, không ghi đè) |
+
+- **Status = cột.** Status của vòng ánh xạ vào cột của project (bảng **Ánh xạ status**). Tìm cột theo tên (không phân biệt hoa thường) trong `get_project.columns`. Nếu thiếu cột: tạo bằng `create_column` với `stateType` — `Todo` → `unstarted`; `Plan`, `In Progress`, `In Review`, `Compound` → `started`; `Done` → `completed` — rồi ghi một dòng vào comment. Không đổi tên, không xóa cột sẵn có.
+- **Kiểm tra cột hiện tại trước mỗi lần đổi status.** itsaplan có thể tự chuyển issue khi PR được mở/merge (liên kết `Fixes KEY-n` với forge), nên đọc lại `get_issue` trước khi đổi và không ghi đè chuyển trạng thái đã đúng.
+- **Ưu tiên khi chọn việc:** `priority` (`urgent` → `high` → `medium` → `low`), rồi `dueDate` gần nhất.
+
+**Quy trình agent**
+- Trước khi làm việc cụ thể trên repo, query **từng** project trong bảng — ưu tiên `In Progress`, rồi ưu tiên cao, rồi deadline gần nhất, trên tất cả các project.
+- Đọc issue và acceptance bằng tool ở bảng **Tool theo tracker**.
+- **Lập kế hoạch (agent Project):** agent Project chọn issue theo thứ tự ưu tiên ở trên, chuyển status → **`Plan`**, chạy **`ce-plan`**; nếu có PR/MR chứa plan thì resolve conflict, auto-merge vào `main`, **xóa nhánh head PR plan**, và gắn URL PR/MR vào tracker; comment; đổi status → **`In Progress`**. Xem **Quy trình vòng sau `ce-plan`**.
+- **Triển khai (agent Project):** với issue **`In Progress`** (vừa lập kế hoạch xong, hoặc owner chuyển tay), agent Project kiểm tra trên Git provider (GitHub/GitLab) và tracker xem plan / PR của plan đã merge chưa — nếu chưa thì **stop**, chuyển status về **`Todo`** và comment; nếu đã merge thì chạy **`ce-work`** theo plan gắn issue; nếu có PR/MR thì resolve conflict, auto-merge vào `main`, **xóa nhánh head PR ce-work**, và gắn URL PR/MR vào tracker; status → **`In Review`**.
+- **Status → Compound → compound (agent Project):** khi issue chuyển **`Compound`** (agent Project hoặc owner đóng vòng), agent Project chạy **`ce-compound`** để đúc kết learning/DOX; nếu có thay đổi thì tạo PR/MR, kiểm tra/resolve conflict, auto-merge vào `main`, **xóa nhánh head PR ce-compound**, và gắn URL vào tracker; **dọn nhánh** — xóa mọi nhánh head PR plan / ce-work / ce-compound đã merge còn sót; sau khi merge PR của ce-compound (hoặc ngay nếu không có thay đổi) đổi status → **`Done`**. Nếu owner chuyển `Compound` bằng tay khi không có agent Project đang chạy, issue ở lại `Compound` cho tới lần agent Project kế tiếp thấy nó.
+- **Plan ↔ issue (bắt buộc):** khi plan gắn issue trên tracker, ghi đường dẫn plan tương đối vào mô tả issue (ví dụ `docs/plans/feature-x.md`). Nhiều plan: mỗi path một dòng. Đổi tên/di chuyển/xóa plan thì cập nhật mọi issue liên quan. Frontmatter / section của plan phải liệt kê `itsaplan_issues:` (URL/ID issue) chiều ngược lại.
+- Sau khi review xong (issue **`In Review`** / PR merged): agent Project hoặc owner đóng vòng → **`Compound`** + comment — xem **Quy trình vòng `ce-work`**. Bước Triển khai chỉ đưa tới **In Review**, không tự nhảy Compound trước khi review xong.
+
+### Tùy chọn: gắn Cursor `/loop` sau
+
+Khi vòng do agent Project điều khiển đã ổn, có thể cho agent Project lặp theo chu kỳ:
+
+```text
+/loop <interval> Chọn issue mở ưu tiên cao nhất trên itsaplan trong các project kbots
+(ưu tiên In Progress, rồi ưu tiên cao, trên mọi project trong bảng). Nếu chưa có plan thì chạy ce-plan
+rồi comment tracker cho owner và chuyển In Progress; nếu có plan thì kiểm tra plan/PR đã merge chưa (nếu chưa thì chuyển Todo; nếu đã merge thì ce-work). Kiểm chứng. Chạy đóng vòng
+(DoD + tracker Compound + comment tracker cho owner).
+Dừng khi BLOCKED / NEEDS_HUMAN_DECISION.
+```
+
+Không auto-merge sớm. Ưu tiên một vòng giao tính năng ổn định trước multi-agent graph.

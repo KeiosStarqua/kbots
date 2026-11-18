@@ -1,0 +1,38 @@
+{
+  // Issue tracker của vòng: "linear" hoặc "itsaplan" (mặc định "linear").
+  "issueTracker": "itsaplan",
+
+  // Tên hiển thị owner trên tracker — dùng trong comment.
+  "ownerDisplayName": "taquangkhoi",
+
+  // linear: slug workspace. itsaplan: nhãn tùy ý cho instance/team (tùy chọn).
+  "workspace": "itsaplan",
+
+  // true: agent auto-merge PR sau ce-plan / ce-work / ce-compound.
+  // false: chỉ tạo PR và gắn URL lên tracker, chờ owner merge tay.
+  "forceMergePr": true,
+
+  // Tùy chọn: tên status/cột thực tế trong tracker cho từng status của vòng.
+  // Bỏ khóa nào thì dùng tên mặc định bên dưới.
+  // "statuses": {
+  //   "plan": "Plan", "todo": "Todo", "inProgress": "In Progress",
+  //   "inReview": "In Review", "compound": "Compound", "done": "Done"
+  // },
+
+  // Tùy chọn: ai chạy ce-compound khi issue vào status Compound.
+  // "automation": có trigger ngoài bắt status (Cursor Automation). "agent": agent Project tự chạy.
+  // "compoundRunner": "agent",
+
+  // Mọi project của tracker quản lý issue của repo này.
+  // linear: id = id project Linear, url bắt buộc.
+  // itsaplan: id = project key (ví dụ MKT), url tùy chọn.
+  // "default": true trên đúng một project — nơi tạo issue mới khi chưa
+  // xác định được project. Nếu không project nào đánh dấu, project đầu tiên là mặc định.
+  "projects": [
+    {
+      "name": "kbots",
+      "id": "KBOTS",
+      "default": true
+    }
+  ]
+}
