@@ -12,6 +12,10 @@
 ## Local Contracts
 
 - Use Bun and the exact dependency versions in `package.json`.
+- Use Effect v4 (`effect`) for new application logic, especially typed failures,
+  resource management, and asynchronous workflows. Import from `effect` and
+  follow the v4 documentation; avoid introducing new ad hoc promise/error
+  orchestration when Effect fits the operation.
 - Use `@opencode/sdk` for an embedded OpenCode host and `@opencode/client` for the registered
   laptop service.
 - Read saved provider connections through OpenCode; never print credential values or auth headers.

@@ -14,6 +14,7 @@
   "dependencies": {
     "@opencode/client": "2.3.2",
     "@opencode/plugin": "2.3.2",
-    "@opencode/sdk": "2.3.2"
+    "@opencode/sdk": "2.3.2",
+    "effect": "^4.1.4"
   }
 }

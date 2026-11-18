@@ -6,7 +6,8 @@ its client for the laptop's registered OpenCode service.
 ## Package
 
 The package pins `@opencode/sdk`, `@opencode/client`, and `@opencode/plugin` at
-2.3.2. Run commands from the `kbots` directory with Bun:
+2.3.2 and includes Effect v4 for application logic. Run commands from the
+`kbots` directory with Bun:
 
 ```sh
 bun install
@@ -18,6 +19,12 @@ bun run tsc --noEmit
 `Service.ensure()` to reuse or start the registered service and
 `Service.headers()` to apply its authentication header. The header is never
 printed.
+
+Import Effect v4 APIs from `effect`. For example, `control.ts` uses
+`Effect.try` to capture model argument parsing failures and `Effect.runSync` to
+run that synchronous parse at the CLI boundary. See the [Effect v4 installation
+guide](https://effect.website/docs/v4/getting-started/installation) for runtime
+requirements and setup details.
 
 ## Embedded host smoke check
 

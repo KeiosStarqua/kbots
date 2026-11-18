@@ -1,6 +1,20 @@
 import { OpenCode } from "@opencode/client"
 import { Service } from "@opencode/client/service"
+import { Effect } from "effect"
 import { resolve } from "node:path"
+
+function parseModel(model: string): { providerID: string; id: string } {
+  return Effect.runSync(Effect.try(() => {
+    const separator = model.indexOf("/")
+    if (separator < 1 || separator === model.length - 1) {
+      throw new Error("--model must use provider/model format")
+    }
+    return {
+      providerID: model.slice(0, separator),
+      id: model.slice(separator + 1),
+    }
+  }))
+}
 
 function option(name: string): string | undefined {
   const index = process.argv.indexOf(name)
@@ -113,14 +127,7 @@ if (sessionID) {
 
   let modelRef: { providerID: string; id: string } | undefined
   if (model) {
-    const separator = model.indexOf("/")
-    if (separator < 1 || separator === model.length - 1) {
-      throw new Error("--model must use provider/model format")
-    }
-    modelRef = {
-      providerID: model.slice(0, separator),
-      id: model.slice(separator + 1),
-    }
+    modelRef = parseModel(model)
   }
 
   const session = await client.session.create({
