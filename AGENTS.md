@@ -25,7 +25,6 @@
   default `~/.local/bin` is not the intended destination.
 - Keep backend modules separated by responsibility: `cli/`, `opencode/`,
   `orchestrator/`, `bots/`, `workflows/`, `adapters/`, and `db/`.
-- `film-production/.agents/bot/kir-auto/` owns the scheduled bot instructions and job log.
 
 ## Local Contracts
 
@@ -43,7 +42,7 @@
   explicit `kbots project configure --overwrite` command. Never copy
   project-specific bot instructions, plugins, or local state between repos.
 - Read saved provider connections through OpenCode; never print credential values or auth headers.
-- Session commands default to `KIR_AUTO_DIRECTORY` or the sibling film-production checkout.
+- Session commands default to the current directory; pass `--directory` to select another project.
 - Prompting and interrupting sessions are explicit actions. Do not delete sessions.
 - Interrupting a session does not stop a recurring schedule attached to it.
 

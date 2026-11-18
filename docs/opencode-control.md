@@ -76,12 +76,11 @@ bun run control \
 
 The new session is kept on the local service, and the command prints its ID.
 
-## Manage existing `kir-auto` sessions
+## Manage existing sessions
 
-Session commands default to the absolute `kir-auto` directory in the sibling
-`film-production` checkout. Set `KIR_AUTO_DIRECTORY` to override the default;
-`--directory` can select another directory for one command. Existing-session
-actions check that the session belongs to the selected directory.
+Session commands use the current directory by default; `--directory` selects
+another directory for one invocation. Existing-session actions check that the
+session belongs to the selected directory.
 
 List sessions and inspect one session without changing it:
 
@@ -102,8 +101,6 @@ the current run. It does not delete the session or disable a recurring
 schedule attached to it. Manage that schedule separately if future runs should
 stop.
 
-The session ID currently recorded for the `kir-auto` schedule is in
-[`kir-auto/AGENTS.md`](../../film-production/.agents/bot/kir-auto/AGENTS.md).
 Session IDs can change; use `--list-sessions` to check the live service before
 acting.
 
@@ -118,7 +115,7 @@ On 2026-11-18:
   `deepseek`, `opencode`, `opencode-go`, `ollama`, and `nghimmo`.
 - The client sent a test prompt to OpenCode Go and received
   `LOCAL_SERVER_CLIENT_OK`.
-- Session listing and metadata lookup found the scheduled `kir-auto` session.
+- Session listing and metadata lookup succeeded against the selected directory.
 - The smoke check removes its temporary session. The client control command
   keeps prompt sessions so they can be continued later.
 

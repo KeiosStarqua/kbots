@@ -99,9 +99,8 @@ There are three distinct OpenCode paths:
    actions confirm the session belongs to the selected directory; listing and
    inspection are read-only. Interrupt stops the current run only and neither
    deletes the session nor disables a recurring schedule. Session commands
-   default to `KIR_AUTO_DIRECTORY` or the sibling
-   `film-production/.agents/bot/kir-auto` directory; other control commands
-   default to the current directory. Prompt waits are capped at two minutes.
+   default to the current directory, like the other control commands.
+   Prompt waits are capped at two minutes.
 3. **Per-project idle bot sessions — `src/backend/cli/start-sessions.ts`.**
    `kbots sessions start` reads the project's manifest, ensures the local
    OpenCode service, then creates or reuses one idle session per enabled role.
@@ -254,7 +253,6 @@ remain unimplemented in the current tree.
 | --- | --- | --- |
 | `OPENCODE_MODEL` | Smoke check | `provider/model`; defaults to `opencode/inkling-2-small-free` |
 | `OPENCODE_DB_PATH` | Smoke check | Override OpenCode CLI database path |
-| `KIR_AUTO_DIRECTORY` | Session control | Overrides sibling `film-production/.agents/bot/kir-auto` default |
 | `KBOTS_CEO_CAP` | Daemon | Per-project active-CEO dispatch cap; defaults to 4 |
 | `KBOTS_SOCKET` | CLI and GUI | Overrides the default daemon socket |
 | `XDG_RUNTIME_DIR` | CLI and GUI | Supplies the default socket parent directory |

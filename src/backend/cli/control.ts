@@ -21,14 +21,13 @@ function option(name: string): string | undefined {
   return index === -1 ? undefined : process.argv[index + 1]
 }
 
-const kirAutoDirectory = resolve(process.env.KIR_AUTO_DIRECTORY
-  ?? resolve(import.meta.dir, "../../../../film-production/.agents/bot/kir-auto"))
+
 
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
   console.log(`Usage:
   bun run control                         Inspect the local OpenCode service
-  bun run control --list-sessions         List sessions in kir-auto
-  bun run control --session <id>          Inspect a kir-auto session
+  bun run control --list-sessions         List sessions in the current directory
+  bun run control --session <id>          Inspect a session
   bun run control --session <id> --prompt <text>
                                           Send a prompt to an existing session
   bun run control --session <id> --interrupt
@@ -38,11 +37,10 @@ if (process.argv.includes("--help") || process.argv.includes("-h")) {
 Options:
   --prompt <text>          Prompt text
   --model <provider/model> Model for a new session
-  --session <id>           Existing session (must be in kir-auto)
-  --list-sessions          List sessions in kir-auto
+  --session <id>           Existing session (must belong to the selected directory)
+  --list-sessions          List sessions in the selected directory
   --interrupt              Interrupt an existing session's current run
-  --directory <path>       Project directory (defaults to kir-auto for
-                           session commands; otherwise the current directory)
+  --directory <path>       Project directory (defaults to the current directory)
 `)
   process.exit(0)
 }
@@ -51,9 +49,7 @@ const prompt = option("--prompt")
 const sessionID = option("--session")
 const interrupt = process.argv.includes("--interrupt")
 const listSessions = process.argv.includes("--list-sessions")
-const directory = resolve(option("--directory") ?? (sessionID || listSessions
-  ? kirAutoDirectory
-  : process.cwd()))
+const directory = resolve(option("--directory") ?? process.cwd())
 const model = option("--model") ?? process.env.OPENCODE_MODEL
 
 if (interrupt && prompt) throw new Error("Choose either --prompt or --interrupt")

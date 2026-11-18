@@ -2,9 +2,7 @@
 
 `kbots` is a local coding workflow orchestrator workspace. Its Bun/TypeScript
 backend manages OpenCode sessions and workflow automation; native Slint and
-Ratatui apps provide desktop and terminal operator interfaces. The existing tools
-also support inspecting and continuing the scheduled `kir-auto` bot session
-in the sibling `film-production` checkout.
+Ratatui apps provide desktop and terminal operator interfaces.
 
 The package has three entry points:
 
@@ -173,13 +171,11 @@ minutes for a response.
 
 ### Inspect and manage sessions
 
-Session listing and existing-session commands default to the `kir-auto`
-directory in the sibling `film-production` checkout. Override this default
-with `KIR_AUTO_DIRECTORY`, or select a directory for one invocation with
-`--directory`.
+Session listing and existing-session commands use the current directory by
+default. Select another directory for one invocation with `--directory`.
 
 ```sh
-# Show sessions in kir-auto
+# Show sessions in the current directory
 bun run control --list-sessions
 
 # Inspect one session without changing it
@@ -221,9 +217,8 @@ requires `--session` and cannot be combined with `--prompt`.
 | `OPENCODE_DB_PATH` | `smoke` | Path from `opencode debug paths db` |
 | `KBOTS_CEO_CAP` | Daemon | Per-project active-CEO dispatch cap; defaults to 4 |
 | `KBOTS_SOCKET` | CLI, GUI, TUI | Overrides the default daemon socket |
-| `KIR_AUTO_DIRECTORY` | `control` session commands | Sibling `film-production/.agents/bot/kir-auto` directory |
 | `--model` | `control` new sessions | Service default |
-| `--directory` | `control` | Current directory, except session commands default to `kir-auto` |
+| `--directory` | `control` | Current directory |
 
 The client obtains the service endpoint and authentication header through
 `@opencode/client`. The header is applied internally and is never printed.
