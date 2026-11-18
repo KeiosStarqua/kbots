@@ -5,12 +5,13 @@
 `kbots` is a local coding workflow orchestrator. Its intended runtime has one
 long-lived Bun daemon that owns project/workflow state and OpenCode sessions,
 with Rust command-line, desktop, and terminal clients. The repository currently
-contains the OpenCode smoke/control utilities, project configuration and idle
-session setup, and the Rust clients. The workflow daemon, SQLite persistence,
-and fully connected control-center experiences are architectural targets; the
-IPC contract is defined, but there is no daemon server implementation yet.
-The terminal UI is demo-only. The Slint GUI has RPC calls wired to the
-documented contract but cannot complete them until a daemon is available.
+contains the OpenCode smoke/control utilities, the minimal v1 workflow daemon,
+project configuration and idle session setup, and the Rust clients. The
+daemon is implemented in minimal v1 form (`src/backend/daemon.ts`, started
+manually with `bun run daemon`); the orchestrator/workflow engine,
+scheduling, and full persistence repositories remain planned. The IPC
+contract in `docs/kbots-ipc.md` is served by the v1 daemon. The terminal
+UI is demo-only. The Slint GUI connects to the v1 daemon.
 
 This distinction matters when reading the design below: **implemented** means
 the code exists in this repository; **planned** means the responsibility or
@@ -28,7 +29,7 @@ contract is documented but still needs its owning backend implementation.
                                    ▼
 ┌────────────────┐      Unix socket      ┌──────────────────────────────┐
 │ Rust CLI       │ ─ ─ JSON-RPC 2.0 ─ ─▶│ Bun workflow daemon          │
-│ Slint GUI      │                       │ (planned)                    │
+│ Slint GUI      │                       │ (v1 minimal)                  │
 │ Ratatui TUI    │                       │ orchestrator, workflows, DB, │
 └────────────────┘                       │ bot policy, adapters          │
                                          └─────────────┬────────────────┘
@@ -43,8 +44,8 @@ Separate utility path: `smoke` embeds an OpenCode host through `@opencode/sdk`.
 It is not the workflow daemon and does not serve the clients.
 ```
 
-The dashed socket path is a proposed local interface. Today, daemon-oriented
-CLI calls fail with a socket connection error because the daemon is absent.
+The socket path is the local interface served by the v1 daemon. Until it is
+running, daemon-oriented CLI calls fail with a socket connection error.
 `project configure` and `sessions start` are local/direct OpenCode operations
 and work without that daemon.
 
@@ -54,13 +55,14 @@ and work without that daemon.
 | --- | --- | --- |
 | `src/backend/cli/` | Transitional Bun command entry points for OpenCode control and bot session startup | Implemented |
 | `src/backend/opencode/` | Shared OpenCode service/session adapter | Planned module boundary; behavior currently lives in CLI scripts |
-| `src/backend/orchestrator/` | Scheduling, workflow state transitions, event ingestion, restart reconciliation | Planned |
+| `src/backend/orchestrator/` | v1 task/project/approval/system services; scheduling, workflow state transitions, event ingestion, restart reconciliation | v1 services implemented; workflow engine and scheduling still planned |
 | `src/backend/workflows/` | Task stages, dependencies, acceptance criteria, retry and approval rules | Planned |
-| `src/backend/bots/` | CEO planning/review, GIT and OPS work contracts, coding worker policies | Planned |
+| `src/backend/bots/` | agents.list implemented (read-only registry/manifest/session merge); CEO planning/review, GIT and OPS work contracts, coding worker policies | Work contracts still planned |
 | `src/backend/adapters/` | Explicit Git, Herdr, and optional agmsg integrations | Planned |
-| `src/backend/db/` | SQLite schema, migrations, repositories, transaction boundaries | Planned |
+| `src/backend/db/` | SQLite schema, migrations, repositories, transaction boundaries | Implemented minimal persistence (WAL) |
+| `src/backend/daemon.ts` | Bun daemon entry point: newline-delimited JSON-RPC over a Unix domain socket, SQLite-backed | Implemented (v1 minimal); not auto-installed by install.sh yet; start manually with `bun run daemon` |
 | `cli/` | Rust `kbots` automation client, local project scaffolding/configuration, UI launch | Implemented |
-| `gui/` | Native Slint operator client | UI and RPC calls implemented; daemon unavailable |
+| `gui/` | Native Slint operator client | UI and RPC calls implemented; connects to the v1 daemon |
 | `tui/control-center/` | Native Ratatui dashboard | Demo scaffold; no daemon connection |
 | `docs/` | Detailed OpenCode and IPC operational contracts | Implemented documentation |
 | `install.sh` | Frozen Bun install, TypeScript check, Rust builds, binary and desktop launcher install | Implemented |
@@ -133,7 +135,7 @@ folders and starter `AGENTS.md` files, and submits the registration request.
 When no bot manifest or existing role OpenCode configs exist, it initializes
 the manifest and configs. Existing role configs are preserved; if configs
 exist without a manifest, settings must be migrated into the manifest before
-regeneration. Registration upserts by canonical path in the planned daemon,
+regeneration. Registration upserts by canonical path in the daemon,
 making repeated registration idempotent.
 
 ### Rust CLI
@@ -176,11 +178,11 @@ The daemon continues working if a UI disconnects or exits.
 
 ## Daemon boundary and IPC contract
 
-The planned daemon is the single owner of mutable workflow state and side
-effects. GUI, TUI, and CLI are clients. The transport contract in
+The daemon is the single owner of mutable workflow state and side effects.
+GUI, TUI, and CLI are clients. The transport contract in
 `docs/kbots-ipc.md` is one newline-delimited JSON-RPC 2.0 request and response
 per Unix domain socket connection. The CLI's socket lookup order is documented
-above. The planned RPC surface includes:
+above. The v1 RPC surface includes:
 
 | Method | Purpose |
 | --- | --- |
@@ -192,10 +194,14 @@ above. The planned RPC surface includes:
 | `events.list` | Recent activity for the GUI |
 
 Each request carries `jsonrpc: "2.0"`, an ID, method, and params; responses
-carry the same ID and either a result or error. This is a v1 contract, not a
-running server. Before implementing mutating methods, the daemon must enforce
-permissions, locks, approvals, and idempotency. Clients must not bypass those
-checks or write workflow state directly.
+carry the same ID and either a result or error. This is a v1 contract served by
+`src/backend/daemon.ts` (`bun run daemon`). Creating a task records it
+(status `"planning"`) and logs an event; nothing auto-dispatches it to a bot
+yet, and tasks are not wired to OpenCode prompting. `tasks.cancel` is
+idempotent, `projects.register` upserts by canonical path, `approvals.approve`
+only records the decision (no protected operation is auto-executed), and
+`agents.list` is read-only. Unknown methods return `-32601`. Clients must not
+write workflow state directly.
 
 ## Planned workflow and persistence model
 
@@ -216,8 +222,10 @@ The intended backend separates responsibilities as follows:
 6. On restart, the orchestrator reconciles persisted state with scheduled work
    and OpenCode sessions. It continues independently of connected clients.
 
-This is the intended design; workflow execution, recovery, SQLite schema, and
-repositories remain unimplemented in the current tree.
+This is the intended design. The v1 daemon implements minimal SQLite
+persistence (`${XDG_STATE_HOME:-~/.local/state}/kbots/kbots.db`, WAL mode) and
+the methods above; workflow execution, recovery, and the full orchestrator
+remain unimplemented in the current tree.
 
 ## Configuration and local state
 
@@ -228,7 +236,7 @@ repositories remain unimplemented in the current tree.
 | `KIR_AUTO_DIRECTORY` | Session control | Overrides sibling `film-production/.agents/bot/kir-auto` default |
 | `KBOTS_SOCKET` | CLI and GUI | Overrides the default daemon socket |
 | `XDG_RUNTIME_DIR` | CLI and GUI | Supplies the default socket parent directory |
-| `XDG_STATE_HOME` | Session startup | Supplies the root for saved session IDs |
+| `XDG_STATE_HOME` | Session startup; daemon | Supplies the root for saved session IDs and the daemon SQLite database |
 | `KBOTS_INSTALL_DIR` | Installer | Defaults to `$HOME/.local/bin` |
 | `KBOTS_GUI_BIN`, `KBOTS_TUI_BIN` | CLI | Override the installed UI executable paths |
 
@@ -242,7 +250,7 @@ The repository has two build ecosystems: Bun/TypeScript for the backend and
 Cargo for the Rust clients. `./install.sh` installs frozen Bun dependencies,
 runs `bun run tsc --noEmit`, builds the GUI, TUI, and CLI in release mode,
 installs their binaries, and writes the desktop launcher. It does not install
-a daemon binary because none exists yet.
+a daemon binary yet; start the daemon manually with `bun run daemon`.
 
 For detailed contracts, see:
 

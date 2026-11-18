@@ -6,7 +6,7 @@ Ratatui apps provide desktop and terminal operator interfaces. The existing tool
 also support inspecting and continuing the scheduled `kir-auto` bot session
 in the sibling `film-production` checkout.
 
-The package has two entry points:
+The package has three entry points:
 
 - **`smoke`** runs an embedded OpenCode host in the current process, checks
   provider access, sends one test prompt, prints the response, and removes its
@@ -14,16 +14,19 @@ The package has two entry points:
 - **`control`** connects to the registered local OpenCode service. It can
   report service and provider information, inspect sessions, send prompts, or
   interrupt a session's current run.
+- **`daemon`** starts the minimal v1 Bun daemon: newline-delimited JSON-RPC
+  2.0 over a Unix domain socket, backed by SQLite. Run it with
+  `bun run daemon`.
 
 ## Control Center starter
 
 The workspace separates the Bun backend in `src/backend/` from the Rust/Slint
 desktop client in `gui/control-center/` and the Rust/Ratatui terminal client in
-`tui/control-center/`. Both interfaces will connect to one Bun daemon. The
-dashboards include navigation, project/task/agent/approval summaries, agent
-activity, a task queue, and recent events. Displayed values are demo data; the
-interfaces do not yet connect to a daemon. The `kbots` automation entry
-point is in `cli/` and uses the planned JSON-RPC socket contract.
+`tui/control-center/`. The desktop app connects to one Bun daemon; the TUI
+does not yet. The dashboards include navigation, project/task/agent/approval
+summaries, agent activity, a task queue, and recent events. The TUI displays
+demo data. The `kbots` automation entry
+point is in `cli/` and uses the v1 JSON-RPC socket contract.
 
 After completing application changes, install the latest GUI, TUI, and CLI
 binaries and verify the TypeScript backend with:
@@ -36,8 +39,9 @@ The installer adds a desktop launcher at
 `${XDG_DATA_HOME:-$HOME/.local/share}/applications/kbots.desktop` and uses
 `~/.local/bin` for binaries by default. Set `KBOTS_INSTALL_DIR` to use a
 different destination, for example `KBOTS_INSTALL_DIR="$HOME/bin" ./install.sh`.
-It does not use `sudo`. The Bun daemon remains a source package because its
-daemon executable has not been implemented yet.
+It does not use `sudo`. The installer does not install a daemon binary yet;
+start the daemon manually with `bun run daemon` from the repo (or
+`bun run src/backend/daemon.ts`).
 
 Run the desktop starter with:
 
@@ -54,8 +58,8 @@ cargo run --manifest-path tui/control-center/Cargo.toml
 The TUI demo adapts to narrow terminal widths and uses arrow keys or `h`/`j`/`k`/`l`
 to navigate, `1`–`6` to jump to a section, and `q` or `Esc` to exit. The CLI can
 launch either UI and defines automation commands for status, tasks, projects,
-agents, and approvals. Until the daemon is implemented, those API commands
-return a clear socket connection error.
+agents, and approvals. Until the daemon is running, those API commands return
+a clear socket connection error.
 
 Register each local project (or run `kbots project add` from inside its root):
 
@@ -72,7 +76,8 @@ folders and starter instruction files. For a new bot setup, it also writes an
 editable `.agents/bot/kbots.json` manifest and generates each role's
 `opencode.jsonc`. Existing project configs are preserved. Edit the manifest
 and run `kbots project configure --overwrite` to regenerate them. Registry
-persistence still requires the Bun daemon.
+persistence is handled by the Bun daemon's local SQLite database; start it
+with `bun run daemon`.
 
 Start the idle OpenCode sessions for enabled roles with `kbots sessions start`.
 The command reads `.agents/bot/kbots.json`, uses each bot directory so its

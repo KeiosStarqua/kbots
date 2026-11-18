@@ -65,4 +65,4 @@ case ":${PATH}:" in
   *) printf 'Add %s to PATH to run these commands by name.\n' "${install_dir}" ;;
 esac
 
-printf '\nThe Bun backend remains a source package; its daemon executable is not implemented yet.\n'
+printf '\nThe Bun backend is a source package; start the workflow daemon with `bun run daemon`.\n'

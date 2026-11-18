@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "smoke": "bun run src/backend/smoke.ts",
+    "daemon": "bun run src/backend/daemon.ts",
     "control": "bun run src/backend/cli/control.ts",
     "sessions:start": "bun run src/backend/cli/start-sessions.ts"
   },

@@ -30,10 +30,12 @@ the CLI uses `$XDG_RUNTIME_DIR/kbots.sock`, falling back to
 `$HOME/.local/run/kbots.sock`. The GUI and TUI paths can be overridden with
 `KBOTS_GUI_BIN` and `KBOTS_TUI_BIN`.
 
-The Bun daemon and JSON-RPC server are not implemented yet. Until they are,
-`status`, `tasks`, `projects`, `agents`, and `approve` return a clear connection
-error. `project add` prepares missing `.agents/bot/{ceo,git,ops}` folders and
-starter `AGENTS.md` files before the daemon request. If the project has no
+The Bun daemon and JSON-RPC server exist (v1 minimal). Start it with
+`bun run daemon` from the repo (or `bun run src/backend/daemon.ts`). Until it
+is running, `status`, `tasks`, `projects`, `agents`, and `approve` return a
+clear connection error. `project add` prepares missing
+`.agents/bot/{ceo,git,ops}` folders and starter `AGENTS.md` files before the
+daemon request. If the project has no
 existing per-bot `opencode.jsonc`, it also creates `.agents/bot/kbots.json` and
 renders one OpenCode config per enabled role. The manifest is the editable
 source of truth; put OpenCode config keys under that role's `opencode` object
@@ -56,5 +58,5 @@ IDs are stored with mode `0600` under `${XDG_STATE_HOME:-~/.local/state}/kbots/p
 and reused on later runs when the OpenCode service still has them. The command
 connects to or starts the local OpenCode service; it does not require the
 workflow daemon.
-Their planned methods and newline-delimited JSON-RPC contract are documented
+The methods and newline-delimited JSON-RPC contract are documented
 in [`../docs/kbots-ipc.md`](../docs/kbots-ipc.md).

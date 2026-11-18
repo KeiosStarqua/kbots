@@ -2,7 +2,10 @@
 
 The Bun daemon owns workflow state and side effects. GUI, TUI, and CLI are
 clients. The initial transport contract is one newline-delimited JSON-RPC 2.0
-request and response per Unix domain socket connection.
+request and response per Unix domain socket connection. The daemon is
+implemented (v1 minimal) and is started manually with `bun run daemon`
+(equivalently `bun run src/backend/daemon.ts`); it is not installed by
+`install.sh` yet.
 
 The CLI discovers the socket in this order:
 
@@ -46,17 +49,29 @@ Initial CLI methods:
 | `project show ID` | `projects.get` | `projectId` |
 | `approve ID` | `approvals.approve` | `approvalId` |
 
+Result shapes for the read and create methods:
+
+| Method | Result |
+| --- | --- |
+| `tasks.create` | `{taskId, status}` (`status` is `"planning"`) |
+| `tasks.list` | `{items: [...]}` |
+| `tasks.get` | task object with `taskId` |
+| `tasks.cancel` | `{taskId, status}` |
+| `approvals.list` | `{items: [...]}` |
+| `events.list` | `{items: [...]}` (newest first; `limit` defaults to 100, max 500) |
+| `agents.list` | `{items: [{projectId?, projectPath, role, enabled, sessionID\|null, directory, registered}]}` |
+
 The desktop GUI also requests `approvals.list` and `events.list` (with an
 optional `limit`) to populate the approvals and activity views. These read
-methods should return an `items` array in `result`. The daemon executable is
-not implemented yet, so GUI operations report a connection or method error
-until a compatible daemon is running.
+methods return an `items` array in `result`, as the GUI expects. The daemon is
+implemented (v1), so GUI operations complete when it is running; the Ratatui
+TUI is still demo-only and does not connect.
 
 For `projects.register`, the CLI first canonicalizes the existing directory,
 creates missing `.agents/bot/{ceo,git,ops}` folders and starter `AGENTS.md`
 files, and generates the initial manifest/configs only when no per-bot
 `opencode.jsonc` already exists. It does not overwrite existing files or copy
-bot configs from another project. The daemon should upsert registrations by
+bot configs from another project. The daemon upserts registrations by
 canonical path so repeated adds are idempotent.
 
 `kbots project configure [PATH]` is local and does not need the daemon. The
@@ -74,8 +89,7 @@ manifest from those existing settings before using `--overwrite`.
 one idle session in each role directory. It records IDs in the user's local
 state directory and checks saved IDs against OpenCode before reusing them.
 Session creation does not prompt the agents. This local action talks directly
-to the OpenCode service and remains available before the workflow daemon is
-implemented.
+to the OpenCode service and remains usable without the workflow daemon.
 
 ## Bot folder convention
 
@@ -84,5 +98,32 @@ roles. Their role instructions, OpenCode configs, plugins, watcher scripts,
 schedules, and resource limits are project-specific. Registration guarantees
 the common directories only; it leaves those project contracts to each repo.
 
-This is a proposed v1 contract, not a running API. The daemon must validate
-permissions, locks, approvals, and idempotency for every mutating method.
+## Daemon status (v1)
+
+The daemon exists and serves the methods above. It stores state in SQLite at
+`${XDG_STATE_HOME:-~/.local/state}/kbots/kbots.db` (WAL mode). It creates the
+socket's parent directory, unlinks stale sockets, sets the socket mode to
+`0600`, and cleans up the socket on SIGINT/SIGTERM. Unknown methods return
+JSON-RPC `-32601`.
+
+Honest v1 semantics:
+
+- `tasks.create` records the task (status `"planning"`) and logs an event.
+  Nothing auto-dispatches tasks to a bot yet; the orchestrator/workflow engine
+  is still planned.
+- `tasks.cancel` is idempotent.
+- `projects.register` upserts by canonical path (idempotent).
+- `approvals.approve` records the approve decision; no protected operation is
+  auto-executed.
+- `agents.list` merges the project registry, each project's
+  `.agents/bot/kbots.json` manifest, and saved session IDs from
+  `${XDG_STATE_HOME:-~/.local/state}/kbots/projects/*.json`. It is read-only
+  and does not prompt or start agents.
+- `events.list` returns the ordered event log, newest first, with a `limit`
+  parameter (default 100, max 500).
+- No OpenCode prompting is wired to tasks yet. The daemon does not embed
+  provider credentials, session inspection stays read-only, and clients never
+  write workflow state directly.
+
+Mutating methods are idempotent where noted above; broader permission, lock,
+and approval enforcement for mutating methods is still incomplete.
