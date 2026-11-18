@@ -4,6 +4,8 @@ import { homedir } from "node:os"
 import { isAbsolute, join } from "node:path"
 import { listProjects } from "../db/repositories.ts"
 import type { ProjectRow } from "../db/repositories.ts"
+import { listLiveTerminals } from "../adapters/herdr.ts"
+import type { HerdrTerminal } from "../adapters/herdr.ts"
 
 type Role = "ceo" | "git" | "ops"
 type Manifest = {
@@ -15,6 +17,14 @@ type SessionState = {
   projectPath: string
   sessions: Partial<Record<Role, string>>
 }
+type HerdrAttach = {
+  address: string
+  name?: string
+  agent?: string
+  state?: string
+  status?: string
+  turn?: number
+}
 type AgentItem = {
   projectId?: string
   projectPath: string
@@ -25,6 +35,11 @@ type AgentItem = {
   directory: string
   registered: boolean
   manifestError?: string
+  herdr?: HerdrAttach
+}
+type LiveTerminal = HerdrTerminal & {
+  projectId?: string
+  role?: string
 }
 
 const roles: Role[] = ["ceo", "git", "ops"]
@@ -147,9 +162,46 @@ export async function agentsListHandler(): Promise<Record<string, unknown>> {
     return (roleOrder.get(a.role) ?? roles.length) - (roleOrder.get(b.role) ?? roles.length)
   })
 
+  // Read-only live view from Herdr. Failures degrade to a herdrUnavailable
+  // note instead of failing the whole handler.
+  let liveTerminals: LiveTerminal[] = []
+  let herdrUnavailable: string | undefined
+  try {
+    const terminals = await listLiveTerminals()
+    const itemByDirectory = new Map<string, AgentItem>()
+    for (const item of items) {
+      if (!itemByDirectory.has(item.directory)) itemByDirectory.set(item.directory, item)
+    }
+    const projectByPath = new Map<string, ProjectRow>(registry.map((project) => [project.path, project]))
+    liveTerminals = terminals.map((terminal) => {
+      const enriched: LiveTerminal = { ...terminal }
+      const hit = itemByDirectory.get(terminal.cwd)
+      if (hit) {
+        hit.herdr = {
+          address: terminal.address,
+          ...(terminal.name !== undefined ? { name: terminal.name } : {}),
+          ...(terminal.agent !== undefined ? { agent: terminal.agent } : {}),
+          ...(terminal.state !== undefined ? { state: terminal.state } : {}),
+          ...(terminal.status !== undefined ? { status: terminal.status } : {}),
+          ...(terminal.turn !== undefined ? { turn: terminal.turn } : {}),
+        }
+        enriched.projectId = hit.projectId
+        enriched.role = hit.role
+        return enriched
+      }
+      const project = projectByPath.get(terminal.cwd)
+      if (project) enriched.projectId = project.projectId
+      return enriched
+    })
+  } catch (error) {
+    herdrUnavailable = error instanceof Error ? error.message : String(error)
+  }
+
   return {
     items,
+    liveTerminals,
     registeredProjects: registry.length,
     generatedAt: new Date().toISOString(),
+    ...(herdrUnavailable ? { herdrUnavailable } : {}),
   }
 }

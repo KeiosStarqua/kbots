@@ -60,7 +60,7 @@ Result shapes for the read and create methods:
 | `tasks.cancel` | `{taskId, status}` |
 | `approvals.list` | `{items: [...]}` |
 | `events.list` | `{items: [...]}` (newest first; `limit` defaults to 100, max 500) |
-| `agents.list` | `{items: [{projectId?, projectPath, role, enabled, sessionID\|null, directory, registered}]}` |
+| `agents.list` | `{items: [{projectId?, projectPath, role, enabled, sessionID\|null, directory, registered, herdr?}], liveTerminals: [{address, agent?, name?, cwd, state?, status?, turn?, projectId?, role?}], registeredProjects, generatedAt, herdrUnavailable?}` — `herdr` is attached on an exact role-directory match; `liveTerminals` is the read-only `hc ls` view from Herdr (empty + `herdrUnavailable` when `hc` fails) |
 
 The desktop GUI also requests `approvals.list` and `events.list` (with an
 optional `limit`) to populate the approvals and activity views. These read
@@ -119,7 +119,12 @@ Honest v1 semantics:
 - `agents.list` merges the project registry, each project's
   `.agents/bot/kbots.json` manifest, and saved session IDs from
   `${XDG_STATE_HOME:-~/.local/state}/kbots/projects/*.json`. It is read-only
-  and does not prompt or start agents.
+  and does not prompt or start agents. It also shells out to `hc ls`
+  (read-only, via the Herdr adapter) to attach live terminal info: exact
+  role-directory matches get a `herdr` block on the item (address, name,
+  agent, state, status, turn), and all live terminals are returned in
+  `liveTerminals`. If `hc` is unavailable or fails, the handler still
+  succeeds and reports `herdrUnavailable` instead.
 - `events.list` returns the ordered event log, newest first, with a `limit`
   parameter (default 100, max 500).
 - No OpenCode prompting is wired to tasks yet. The daemon does not embed

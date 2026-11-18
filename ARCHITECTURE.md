@@ -59,7 +59,7 @@ and work without that daemon.
 | `src/backend/orchestrator/` | v1 task/project/approval/system services; scheduling, workflow state transitions, event ingestion, restart reconciliation | v1 services implemented; workflow engine and scheduling still planned |
 | `src/backend/workflows/` | Task stages, dependencies, acceptance criteria, retry and approval rules | Planned |
 | `src/backend/bots/` | agents.list implemented (read-only registry/manifest/session merge); CEO planning/review, GIT and OPS work contracts, coding worker policies | Work contracts still planned |
-| `src/backend/adapters/` | Explicit Git, Herdr, and optional agmsg integrations | Planned |
+| `src/backend/adapters/` | Herdr adapter (read-only `hc ls`) implemented; Git and optional agmsg integrations | Herdr implemented; Git/agmsg planned |
 | `src/backend/db/` | SQLite schema, migrations, repositories, transaction boundaries | Implemented minimal persistence (WAL) |
 | `src/backend/daemon.ts` | Bun daemon entry point: newline-delimited JSON-RPC over a Unix domain socket, SQLite-backed | Implemented (v1 minimal); deployed as the `kbots-daemon` systemd user service by install.sh (opt out with `KBOTS_SKIP_DAEMON_UNIT=1`) |
 | `cli/` | Rust `kbots` automation client, local project scaffolding/configuration, UI launch | Implemented |
@@ -151,7 +151,9 @@ of three paths:
 - **Daemon RPC:** status, tasks, agents, project registration/list/show, and
   approvals are encoded as a single JSON-RPC request and sent to the Unix
   socket. `project add` performs local scaffold preparation first, then sends
-  the registration request. Responses are printed as JSON. Socket operations
+  the registration request. Responses are printed as JSON when stdout is not a
+  TTY (or `--json` is passed); on a terminal, the CLI renders human-readable
+  tables and summaries instead. Socket operations
   use 15-second read/write timeouts and validate the JSON-RPC version and ID.
 
 `kbots gui` and `kbots tui` launch the installed UI binaries. `KBOTS_GUI_BIN`
