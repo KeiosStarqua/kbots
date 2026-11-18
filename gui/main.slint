@@ -1,0 +1,130 @@
+import { Button, LineEdit, ScrollView } from "std-widgets.slint";
+
+export component MainWindow inherits Window {
+    title: "kbots Control Center";
+    preferred-width: 1200px;
+    preferred-height: 800px;
+    min-width: 900px;
+    min-height: 620px;
+    background: #101512;
+
+    in-out property <string> active-page: "Overview";
+    in-out property <string> output: "Select a page action to load live daemon data.";
+    in-out property <string> connection-text: "Checking connection…";
+    in-out property <bool> connection-ok: false;
+    in-out property <string> task-title;
+    in-out property <string> task-project;
+    in-out property <string> filter-project;
+    in-out property <string> project-path;
+    in-out property <string> project-name;
+    in-out property <string> item-id;
+
+    callback refresh(); callback load-tasks(); callback create-task(); callback cancel-task();
+    callback load-projects(); callback register-project(); callback load-agents();
+    callback load-approvals(); callback approve(); callback load-activity(); callback show-item();
+
+    VerticalLayout {
+        spacing: 0px;
+        Rectangle {
+            height: 62px; background: #141b17;
+            HorizontalLayout {
+                padding-left: 22px; padding-right: 22px; spacing: 12px;
+                Rectangle { width: 30px; height: 30px; border-radius: 8px; background: #a5d6a7;
+                    Text { text: "K"; color: #101512; font-size: 18px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+                }
+                Text { text: "kbots  /  Control Center"; color: #eff5f0; font-size: 16px; font-weight: 700; vertical-alignment: center; }
+                Rectangle { horizontal-stretch: 1; }
+                Text { text: root.connection-text; color: root.connection-ok ? #a5d6a7 : #f0c674; font-size: 12px; vertical-alignment: center; }
+                Button { text: "Refresh status"; clicked => { root.refresh(); } }
+            }
+        }
+        Rectangle { height: 1px; background: #28332c; }
+        HorizontalLayout {
+            spacing: 0px;
+            Rectangle {
+                width: 190px; background: #141b17;
+                VerticalLayout {
+                    padding: 14px; spacing: 5px;
+                    Text { text: "WORKSPACE"; color: #86948b; font-size: 10px; font-weight: 700; height: 28px; vertical-alignment: center; }
+                    for page[index] in ["Overview", "Projects", "Tasks", "Agents", "Approvals", "Activity log", "Settings"] : Rectangle {
+                        height: 40px; border-radius: 7px; background: root.active-page == page ? #243029 : transparent;
+                        Text { text: page; color: root.active-page == page ? #eff5f0 : #9daaa1; vertical-alignment: center; x: 12px; }
+                        TouchArea { clicked => { root.active-page = page; } }
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                    Text { text: "Local daemon · JSON-RPC"; color: #86948b; font-size: 10px; wrap: word-wrap; }
+                }
+            }
+            Rectangle { width: 1px; background: #28332c; }
+            ScrollView {
+                VerticalLayout {
+                    padding: 28px; spacing: 18px;
+                    Text { text: root.active-page; color: #eff5f0; font-size: 26px; font-weight: 700; }
+                    if root.active-page == "Overview": VerticalLayout {
+                        spacing: 14px;
+                        Text { text: "Live workspace status"; color: #9daaa1; }
+                        Button { text: "Load system status"; clicked => { root.refresh(); } }
+                        Text { text: "Use the sections at left to manage projects, tasks, agents, approvals, and activity."; color: #9daaa1; wrap: word-wrap; }
+                    }
+                    if root.active-page == "Projects": VerticalLayout {
+                        spacing: 10px;
+                        Text { text: "Register an existing project"; color: #dce6de; font-size: 16px; }
+                        LineEdit { placeholder-text: "Absolute project directory"; text <=> root.project-path; }
+                        LineEdit { placeholder-text: "Display name (optional)"; text <=> root.project-name; }
+                        HorizontalLayout { spacing: 8px;
+                            Button { text: "Register project"; clicked => { root.register-project(); } }
+                            Button { text: "List projects"; clicked => { root.load-projects(); } }
+                            LineEdit { placeholder-text: "Project ID"; text <=> root.item-id; }
+                            Button { text: "Show project"; clicked => { root.show-item(); } }
+                        }
+                    }
+                    if root.active-page == "Tasks": VerticalLayout {
+                        spacing: 10px;
+                        Text { text: "Create and inspect workflow tasks"; color: #dce6de; font-size: 16px; }
+                        LineEdit { placeholder-text: "Task description"; text <=> root.task-title; }
+                        HorizontalLayout { spacing: 8px;
+                            LineEdit { placeholder-text: "Project ID (optional)"; text <=> root.task-project; }
+                            Button { text: "Create task"; clicked => { root.create-task(); } }
+                            LineEdit { placeholder-text: "Filter by project"; text <=> root.filter-project; }
+                            Button { text: "List tasks"; clicked => { root.load-tasks(); } }
+                        }
+                        HorizontalLayout { spacing: 8px;
+                            LineEdit { placeholder-text: "Task ID"; text <=> root.item-id; }
+                            Button { text: "Show task"; clicked => { root.show-item(); } }
+                            Button { text: "Cancel task"; clicked => { root.cancel-task(); } }
+                        }
+                    }
+                    if root.active-page == "Agents": HorizontalLayout {
+                        Button { text: "List agents"; clicked => { root.load-agents(); } }
+                        Text { text: "Agent execution and sessions are owned by the daemon."; color: #9daaa1; vertical-alignment: center; }
+                    }
+                    if root.active-page == "Approvals": VerticalLayout {
+                        spacing: 10px;
+                        HorizontalLayout { spacing: 8px;
+                            Button { text: "List approvals"; clicked => { root.load-approvals(); } }
+                            LineEdit { placeholder-text: "Approval ID"; text <=> root.item-id; }
+                            Button { text: "Approve"; clicked => { root.approve(); } }
+                        }
+                    }
+                    if root.active-page == "Activity log": HorizontalLayout {
+                        Button { text: "Load recent activity"; clicked => { root.load-activity(); } }
+                        Text { text: "Returns the latest events exposed by the daemon."; color: #9daaa1; vertical-alignment: center; }
+                    }
+                    if root.active-page == "Settings": VerticalLayout {
+                        spacing: 8px;
+                        Text { text: "Connection"; color: #dce6de; font-size: 16px; }
+                        Text { text: "Socket discovery: --socket=PATH, KBOTS_SOCKET, XDG_RUNTIME_DIR/kbots.sock, then ~/.local/run/kbots.sock"; color: #9daaa1; wrap: word-wrap; }
+                        Button { text: "Check daemon"; clicked => { root.refresh(); } }
+                    }
+                    Rectangle { height: 1px; background: #28332c; }
+                    Text { text: "RESULT"; color: #86948b; font-size: 10px; font-weight: 700; }
+                    Rectangle {
+                        background: #141b17; border-radius: 10px; border-width: 1px; border-color: #28332c;
+                        min-height: 300px;
+                        Text { text: root.output; color: #dce6de; font-size: 13px; font-family: "monospace"; wrap: word-wrap; x: 16px; y: 14px; width: parent.width - 32px; height: parent.height - 28px; vertical-alignment: top; }
+                    }
+                }
+            }
+        }
+    }
+}

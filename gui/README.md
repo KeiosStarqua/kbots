@@ -1,17 +1,18 @@
 # Desktop GUI
 
-`control-center/` is the native Slint application (Rust + Slint 1.19). It is a
-presentation and operator-control client; workflow policy, persistence, and bot
-execution stay in the Bun backend. The planned connection boundary is a local
-Unix socket using JSON-RPC, with event notifications flowing from the daemon
-to both this GUI and the [Ratatui TUI](../tui/README.md).
+This directory contains the native Slint desktop application. It is an
+operator-control client; workflow policy, persistence, and bot execution stay
+in the Bun backend. It connects through the local Unix socket JSON-RPC contract
+documented in [kbots IPC](../docs/kbots-ipc.md), shared with the
+[Ratatui TUI](../tui/README.md).
 
-The first screen is a dashboard scaffold with sample content. Live state,
-commands, logs, approvals, and reconnect behavior will be added after the
-backend API is defined.
+The GUI provides status, project registration and lookup, task creation/listing/
+inspection/cancellation, agent and approval views, approval actions, recent
+activity, and socket configuration guidance. Results and connection failures
+are shown in the app.
 
 Start the native app from this directory with:
 
 ```sh
-cargo run --manifest-path control-center/Cargo.toml
+cargo run --manifest-path Cargo.toml
 ```

@@ -16,7 +16,7 @@ printf 'Installing Bun dependencies from the frozen lockfile...\n'
 (cd "${repo_root}" && bun run tsc --noEmit)
 
 printf 'Building the Slint desktop GUI...\n'
-cargo build --release --manifest-path "${repo_root}/gui/control-center/Cargo.toml"
+cargo build --release --manifest-path "${repo_root}/gui/Cargo.toml"
 
 printf 'Building the Ratatui terminal UI...\n'
 cargo build --release --manifest-path "${repo_root}/tui/control-center/Cargo.toml"
@@ -26,7 +26,7 @@ cargo build --release --manifest-path "${repo_root}/cli/Cargo.toml"
 
 mkdir -p "${install_dir}"
 install -m 755 \
-  "${repo_root}/gui/control-center/target/release/kbots-control-center" \
+  "${repo_root}/gui/target/release/kbots-control-center" \
   "${install_dir}/kbots-gui"
 install -m 755 \
   "${repo_root}/tui/control-center/target/release/kbots-tui" \
