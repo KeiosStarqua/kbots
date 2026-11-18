@@ -77,7 +77,10 @@ The Bun daemon and JSON-RPC server exist (v1 minimal) and run as the
 is running, `status`, `tasks`, `projects`, `agents`, and `approve` return a
 clear connection error. `project add` prepares missing
 `.agents/bot/{ceo,git,ops}` folders and starter `AGENTS.md` files before the
-daemon request. If the project has no
+daemon request. Editable source templates live in `cli/templates/bots/` and
+are embedded into the CLI binary at build time. Kbots creates a starter only
+when that role’s `AGENTS.md` is missing; it never replaces existing bot
+instructions during registration or configuration. If the project has no
 existing per-bot `opencode.jsonc`, it also creates `.agents/bot/kbots.json` and
 renders one OpenCode config per enabled role. The manifest is the editable
 source of truth; put OpenCode config keys under that role's `opencode` object
