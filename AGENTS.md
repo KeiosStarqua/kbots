@@ -15,9 +15,14 @@
 - Keep sample UI state clearly marked until connected to the backend API. The
   TUI must restore terminal state on normal exit and on panics.
 - After completing application code changes, run `./install.sh` to synchronize
-  Bun dependencies, type-check, build the Rust clients, and install their
-  binaries. Use `KBOTS_INSTALL_DIR` when the default `~/.local/bin` is not the
-  intended destination.
+  Bun dependencies, type-check, build the Rust clients, install their
+  binaries, and deploy the daemon: it installs `deploy/kbots-daemon.service` as
+  the `kbots-daemon` systemd user service (enable + restart) when a user
+  systemd session is available. Clients must always be running freshly deployed
+  code, so never skip this step; use `KBOTS_SKIP_DAEMON_UNIT=1 ./install.sh`
+  only when explicitly unwanted, and then restart the daemon yourself
+  (`systemctl --user restart kbots-daemon`). Use `KBOTS_INSTALL_DIR` when the
+  default `~/.local/bin` is not the intended destination.
 - Keep backend modules separated by responsibility: `cli/`, `opencode/`,
   `orchestrator/`, `bots/`, `workflows/`, `adapters/`, and `db/`.
 - `film-production/.agents/bot/kir-auto/` owns the scheduled bot instructions and job log.

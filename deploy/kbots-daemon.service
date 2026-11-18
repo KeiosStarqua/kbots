@@ -1,0 +1,15 @@
+[Unit]
+Description=kbots workflow daemon (local JSON-RPC over Unix socket)
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO_ROOT@
+ExecStart=@BUN@ run src/backend/daemon.ts
+Restart=on-failure
+RestartSec=2
+# Socket defaults to $XDG_RUNTIME_DIR/kbots.sock (same lookup order as the CLI).
+# Set KBOTS_SOCKET here to override.
+
+[Install]
+WantedBy=default.target

@@ -30,8 +30,9 @@ the CLI uses `$XDG_RUNTIME_DIR/kbots.sock`, falling back to
 `$HOME/.local/run/kbots.sock`. The GUI and TUI paths can be overridden with
 `KBOTS_GUI_BIN` and `KBOTS_TUI_BIN`.
 
-The Bun daemon and JSON-RPC server exist (v1 minimal). Start it with
-`bun run daemon` from the repo (or `bun run src/backend/daemon.ts`). Until it
+The Bun daemon and JSON-RPC server exist (v1 minimal) and run as the
+`kbots-daemon` systemd user service after `./install.sh` (opt out with
+`KBOTS_SKIP_DAEMON_UNIT=1`; without systemd, `bun run daemon`). Until it
 is running, `status`, `tasks`, `projects`, `agents`, and `approve` return a
 clear connection error. `project add` prepares missing
 `.agents/bot/{ceo,git,ops}` folders and starter `AGENTS.md` files before the

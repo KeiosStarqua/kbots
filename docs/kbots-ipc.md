@@ -3,9 +3,10 @@
 The Bun daemon owns workflow state and side effects. GUI, TUI, and CLI are
 clients. The initial transport contract is one newline-delimited JSON-RPC 2.0
 request and response per Unix domain socket connection. The daemon is
-implemented (v1 minimal) and is started manually with `bun run daemon`
-(equivalently `bun run src/backend/daemon.ts`); it is not installed by
-`install.sh` yet.
+implemented (v1 minimal) and runs as the `kbots-daemon` systemd user service
+after `./install.sh` (opt out with `KBOTS_SKIP_DAEMON_UNIT=1`), or manually
+with `bun run daemon` (equivalently `bun run src/backend/daemon.ts`) without
+systemd.
 
 The CLI discovers the socket in this order:
 

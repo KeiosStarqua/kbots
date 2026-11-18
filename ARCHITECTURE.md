@@ -8,9 +8,10 @@ with Rust command-line, desktop, and terminal clients. The repository currently
 contains the OpenCode smoke/control utilities, the minimal v1 workflow daemon,
 project configuration and idle session setup, and the Rust clients. The
 daemon is implemented in minimal v1 form (`src/backend/daemon.ts`, started
-manually with `bun run daemon`); the orchestrator/workflow engine,
-scheduling, and full persistence repositories remain planned. The IPC
-contract in `docs/kbots-ipc.md` is served by the v1 daemon. The terminal
+with `bun run daemon`, deployed as the `kbots-daemon` systemd user service by
+`./install.sh`); the orchestrator/workflow engine, scheduling, and full
+persistence repositories remain planned. The IPC contract in
+`docs/kbots-ipc.md` is served by the v1 daemon. The terminal
 UI is demo-only. The Slint GUI connects to the v1 daemon.
 
 This distinction matters when reading the design below: **implemented** means
@@ -60,7 +61,7 @@ and work without that daemon.
 | `src/backend/bots/` | agents.list implemented (read-only registry/manifest/session merge); CEO planning/review, GIT and OPS work contracts, coding worker policies | Work contracts still planned |
 | `src/backend/adapters/` | Explicit Git, Herdr, and optional agmsg integrations | Planned |
 | `src/backend/db/` | SQLite schema, migrations, repositories, transaction boundaries | Implemented minimal persistence (WAL) |
-| `src/backend/daemon.ts` | Bun daemon entry point: newline-delimited JSON-RPC over a Unix domain socket, SQLite-backed | Implemented (v1 minimal); not auto-installed by install.sh yet; start manually with `bun run daemon` |
+| `src/backend/daemon.ts` | Bun daemon entry point: newline-delimited JSON-RPC over a Unix domain socket, SQLite-backed | Implemented (v1 minimal); deployed as the `kbots-daemon` systemd user service by install.sh (opt out with `KBOTS_SKIP_DAEMON_UNIT=1`) |
 | `cli/` | Rust `kbots` automation client, local project scaffolding/configuration, UI launch | Implemented |
 | `gui/` | Native Slint operator client | UI and RPC calls implemented; connects to the v1 daemon |
 | `tui/control-center/` | Native Ratatui dashboard | Demo scaffold; no daemon connection |
@@ -249,8 +250,11 @@ inside each project checkout.
 The repository has two build ecosystems: Bun/TypeScript for the backend and
 Cargo for the Rust clients. `./install.sh` installs frozen Bun dependencies,
 runs `bun run tsc --noEmit`, builds the GUI, TUI, and CLI in release mode,
-installs their binaries, and writes the desktop launcher. It does not install
-a daemon binary yet; start the daemon manually with `bun run daemon`.
+installs their binaries, writes the desktop launcher, and installs and
+restarts the `kbots-daemon` systemd user service from
+`deploy/kbots-daemon.service` (opt out with `KBOTS_SKIP_DAEMON_UNIT=1`). After
+every application code change, `./install.sh` is the deploy path — clients and
+the daemon must always run freshly deployed code.
 
 For detailed contracts, see:
 

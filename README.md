@@ -39,9 +39,11 @@ The installer adds a desktop launcher at
 `${XDG_DATA_HOME:-$HOME/.local/share}/applications/kbots.desktop` and uses
 `~/.local/bin` for binaries by default. Set `KBOTS_INSTALL_DIR` to use a
 different destination, for example `KBOTS_INSTALL_DIR="$HOME/bin" ./install.sh`.
-It does not use `sudo`. The installer does not install a daemon binary yet;
-start the daemon manually with `bun run daemon` from the repo (or
-`bun run src/backend/daemon.ts`).
+It does not use `sudo`. The installer also installs and restarts the
+`kbots-daemon` systemd user service (from `deploy/kbots-daemon.service`) so the
+daemon is always running freshly deployed code; opt out with
+`KBOTS_SKIP_DAEMON_UNIT=1`. Without a user systemd session, start the daemon
+manually with `bun run daemon`.
 
 Run the desktop starter with:
 
@@ -76,8 +78,8 @@ folders and starter instruction files. For a new bot setup, it also writes an
 editable `.agents/bot/kbots.json` manifest and generates each role's
 `opencode.jsonc`. Existing project configs are preserved. Edit the manifest
 and run `kbots project configure --overwrite` to regenerate them. Registry
-persistence is handled by the Bun daemon's local SQLite database; start it
-with `bun run daemon`.
+persistence is handled by the Bun daemon's local SQLite database. The daemon
+runs as the `kbots-daemon` systemd user service after `./install.sh`.
 
 Start the idle OpenCode sessions for enabled roles with `kbots sessions start`.
 The command reads `.agents/bot/kbots.json`, uses each bot directory so its

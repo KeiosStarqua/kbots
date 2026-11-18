@@ -60,9 +60,29 @@ printf '\nInstalled commands:\n  %s\n  %s\n  %s\nDesktop launcher:\n  %s\n' \
   "${install_dir}/kbots" \
   "${desktop_file}"
 
+unit_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/systemd/user"
+if [[ "${KBOTS_SKIP_DAEMON_UNIT:-0}" == "1" ]]; then
+  printf '\nSkipping kbots-daemon user service (KBOTS_SKIP_DAEMON_UNIT=1).\n'
+elif command -v systemctl >/dev/null 2>&1 && systemctl --user list-units >/dev/null 2>&1; then
+  bun_path="$(command -v bun)"
+  mkdir -p "${unit_dir}"
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line//@REPO_ROOT@/${repo_root}}"
+    line="${line//@BUN@/${bun_path}}"
+    printf '%s\n' "${line}"
+  done < "${repo_root}/deploy/kbots-daemon.service" > "${unit_dir}/kbots-daemon.service"
+  chmod 644 "${unit_dir}/kbots-daemon.service"
+  systemctl --user daemon-reload
+  systemctl --user enable --now kbots-daemon.service >/dev/null
+  systemctl --user restart kbots-daemon.service
+  printf '\nDeployed kbots-daemon user service (starts on login, auto-restarts): %s\n' "${unit_dir}/kbots-daemon.service"
+else
+  printf '\nsystemd user session unavailable; start the daemon manually with `bun run daemon`.\n'
+fi
+
 case ":${PATH}:" in
   *":${install_dir}:"*) ;;
   *) printf 'Add %s to PATH to run these commands by name.\n' "${install_dir}" ;;
 esac
 
-printf '\nThe Bun backend is a source package; start the workflow daemon with `bun run daemon`.\n'
+printf '\nDeployed commands and the kbots-daemon user service (or manual `bun run daemon` without systemd).\n'
