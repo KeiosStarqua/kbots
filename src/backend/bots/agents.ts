@@ -10,7 +10,7 @@
  * critical operations.
  */
 import { createHash } from "node:crypto"
-import { realpathSync } from "node:fs"
+import { existsSync, realpathSync } from "node:fs"
 import { readFile, readdir } from "node:fs/promises"
 import { homedir } from "node:os"
 import { isAbsolute, join } from "node:path"
@@ -166,6 +166,18 @@ export async function probeAgent(agent: AgentRow): Promise<Record<string, unknow
   }
 }
 
+/**
+ * Resolve the opencode program for spawned terminals. Herdr's core resolves
+ * argv[0] in its own environment, which does not inherit the daemon's PATH,
+ * so prefer an absolute path when one exists.
+ */
+function opencodeBin(): string {
+  if (process.env.KBOTS_OPENCODE_BIN) return process.env.KBOTS_OPENCODE_BIN
+  const absolute = join(homedir(), ".opencode", "bin", "opencode")
+  if (existsSync(absolute)) return absolute
+  return "opencode"
+}
+
 async function spawnTerminal(
   agent: AgentRow,
   projectPath: string,
@@ -177,7 +189,7 @@ async function spawnTerminal(
   for (const name of [base, `${base}-${randomSuffix()}`]) {
     try {
       return await runTerminal({
-        argv: ["opencode", "--session", sessionId],
+        argv: [opencodeBin(), "--session", sessionId],
         cwd: roleDir,
         name,
         labels: { kbotsBotId: agent.id, kbotsRole: agent.role, kbotsProjectId: agent.projectId },

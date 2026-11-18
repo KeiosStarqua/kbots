@@ -8,7 +8,7 @@ WorkingDirectory=@REPO_ROOT@
 ExecStart=@BUN@ run src/backend/daemon.ts
 Restart=on-failure
 RestartSec=2
-Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=%h/.local/bin:%h/.opencode/bin:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
 # Socket defaults to $XDG_RUNTIME_DIR/kbots.sock (same lookup order as the CLI).
 # Set KBOTS_SOCKET here to override; agents.list reads live terminals via `hc`
 # (read-only), resolving `hc` from PATH or ~/.local/bin/hc.
