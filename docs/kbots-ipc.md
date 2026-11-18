@@ -60,7 +60,7 @@ Result shapes for the read and create methods:
 | `tasks.cancel` | `{taskId, status}` |
 | `approvals.list` | `{items: [...]}` |
 | `events.list` | `{items: [...]}` (newest first; `limit` defaults to 100, max 500) |
-| `agents.list` | `{items: [{projectId?, projectPath, role, enabled, sessionID\|null, directory, registered, herdr?}], liveTerminals: [{address, agent?, name?, cwd, state?, status?, turn?, projectId?, role?}], registeredProjects, generatedAt, herdrUnavailable?}` — `herdr` is attached on an exact role-directory match; `liveTerminals` is the read-only `hc ls` view from Herdr (empty + `herdrUnavailable` when `hc` fails) |
+| `agents.list` | `{items: [{projectId?, projectPath, role, enabled, sessionID\|null, directory, registered, herdr?}], liveTerminals: [{address, agent?, name?, cwd, state?, status?, turn?, projectId?, role?}], filteredOut, registeredProjects, generatedAt, herdrUnavailable?}` — `herdr` is attached on an exact role-directory match; `liveTerminals` is the read-only `hc ls` view, filtered to terminals inside registered project paths (`filteredOut` counts those hidden) |
 
 The desktop GUI also requests `approvals.list` and `events.list` (with an
 optional `limit`) to populate the approvals and activity views. These read
@@ -122,9 +122,11 @@ Honest v1 semantics:
   and does not prompt or start agents. It also shells out to `hc ls`
   (read-only, via the Herdr adapter) to attach live terminal info: exact
   role-directory matches get a `herdr` block on the item (address, name,
-  agent, state, status, turn), and all live terminals are returned in
-  `liveTerminals`. If `hc` is unavailable or fails, the handler still
-  succeeds and reports `herdrUnavailable` instead.
+  agent, state, status, turn), and live terminals whose cwd is inside a
+  registered project path are returned in `liveTerminals` (plus a
+  `filteredOut` count of hidden terminals from other projects). If `hc` is
+  unavailable or fails, the handler still succeeds and reports
+  `herdrUnavailable` instead.
 - `events.list` returns the ordered event log, newest first, with a `limit`
   parameter (default 100, max 500).
 - No OpenCode prompting is wired to tasks yet. The daemon does not embed

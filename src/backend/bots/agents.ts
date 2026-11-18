@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { realpathSync } from "node:fs"
 import { readdir, readFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { isAbsolute, join } from "node:path"
@@ -163,18 +164,43 @@ export async function agentsListHandler(): Promise<Record<string, unknown>> {
   })
 
   // Read-only live view from Herdr. Failures degrade to a herdrUnavailable
-  // note instead of failing the whole handler.
+  // note instead of failing the whole handler. Live terminals are filtered to
+  // those running inside a registered project; others are reported as
+  // filteredOut rather than listed.
   let liveTerminals: LiveTerminal[] = []
+  let filteredOut = 0
   let herdrUnavailable: string | undefined
   try {
     const terminals = await listLiveTerminals()
+    const projectRoots = registry
+      .map((project) => {
+        let root = project.path
+        try {
+          root = realpathSync(project.path)
+        } catch {
+          // keep the literal path
+        }
+        return { id: project.projectId, path: project.path, root }
+      })
+    const matchingRoot = (cwd: string): (typeof projectRoots)[number] | undefined => {
+      let resolved = cwd
+      try {
+        resolved = realpathSync(cwd)
+      } catch {
+        // keep the literal cwd
+      }
+      return projectRoots.find((project) => resolved === project.root || resolved.startsWith(`${project.root}/`))
+    }
     const itemByDirectory = new Map<string, AgentItem>()
     for (const item of items) {
       if (!itemByDirectory.has(item.directory)) itemByDirectory.set(item.directory, item)
     }
     const projectByPath = new Map<string, ProjectRow>(registry.map((project) => [project.path, project]))
-    liveTerminals = terminals.map((terminal) => {
-      const enriched: LiveTerminal = { ...terminal }
+    const kept = terminals.filter((terminal) => matchingRoot(terminal.cwd) !== undefined)
+    filteredOut = terminals.length - kept.length
+    liveTerminals = kept.map((terminal) => {
+      const project = matchingRoot(terminal.cwd)
+      const enriched: LiveTerminal = { ...terminal, ...(project ? { projectId: project.id } : {}) }
       const hit = itemByDirectory.get(terminal.cwd)
       if (hit) {
         hit.herdr = {
@@ -185,12 +211,11 @@ export async function agentsListHandler(): Promise<Record<string, unknown>> {
           ...(terminal.status !== undefined ? { status: terminal.status } : {}),
           ...(terminal.turn !== undefined ? { turn: terminal.turn } : {}),
         }
-        enriched.projectId = hit.projectId
         enriched.role = hit.role
         return enriched
       }
-      const project = projectByPath.get(terminal.cwd)
-      if (project) enriched.projectId = project.projectId
+      const projectRow = projectByPath.get(terminal.cwd)
+      if (projectRow) enriched.projectId = projectRow.projectId
       return enriched
     })
   } catch (error) {
@@ -200,6 +225,7 @@ export async function agentsListHandler(): Promise<Record<string, unknown>> {
   return {
     items,
     liveTerminals,
+    filteredOut,
     registeredProjects: registry.length,
     generatedAt: new Date().toISOString(),
     ...(herdrUnavailable ? { herdrUnavailable } : {}),

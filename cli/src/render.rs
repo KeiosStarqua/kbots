@@ -277,47 +277,78 @@ fn render_approval(value: &Value) -> String {
 }
 
 fn render_agents(value: &Value) -> String {
+    use std::collections::HashMap;
+
     let mut lines: Vec<String> = Vec::new();
     let items = list_items(value);
     if items.is_empty() {
         lines.push("No registered agents. See `kbots project add`.".to_owned());
     } else {
         lines.push(format!("{BOLD}Registered agents{RESET}"));
-        let rows: Vec<Vec<String>> = items
-            .iter()
-            .map(|item| {
-                let herdr = item.get("herdr").filter(|herdr| !herdr.is_null());
-                let herdr_cell = match herdr {
-                    Some(herdr) => {
-                        let address = herdr.get("address").and_then(Value::as_str).unwrap_or("?");
-                        let state = herdr
-                            .get("status")
-                            .or_else(|| herdr.get("state"))
-                            .and_then(Value::as_str)
-                            .unwrap_or("?");
-                        let turn = herdr.get("turn").and_then(Value::as_i64);
-                        match turn {
-                            Some(turn) => format!("{address} {state} ({turn}t)"),
-                            None => format!("{address} {state}"),
+        let mut group_order: Vec<String> = Vec::new();
+        let mut groups: HashMap<String, Vec<&Value>> = HashMap::new();
+        for item in &items {
+            let key = item
+                .get("projectPath")
+                .and_then(Value::as_str)
+                .unwrap_or("?")
+                .to_owned();
+            if !groups.contains_key(&key) {
+                group_order.push(key.clone());
+                groups.insert(key.clone(), Vec::new());
+            }
+            if let Some(group) = groups.get_mut(&key) {
+                group.push(item);
+            }
+        }
+        for (index, path) in group_order.iter().enumerate() {
+            if index > 0 {
+                lines.push(String::new());
+            }
+            let group = groups[path].clone();
+            let first = group[0];
+            let registered = first.get("registered").and_then(Value::as_bool).unwrap_or(false);
+            let name = first
+                .get("projectName")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .unwrap_or_else(|| base_name(path).to_owned());
+            let suffix = if registered {
+                string(first, "projectId").unwrap_or_else(|| "-".to_owned())
+            } else {
+                "unregistered".to_owned()
+            };
+            lines.push(format!("{BOLD}{name}{RESET}  {DIM}{suffix} · {path}{RESET}"));
+            let rows: Vec<Vec<String>> = group
+                .iter()
+                .map(|item| {
+                    let herdr = item.get("herdr").filter(|herdr| !herdr.is_null());
+                    let herdr_cell = match herdr {
+                        Some(herdr) => {
+                            let address = herdr.get("address").and_then(Value::as_str).unwrap_or("?");
+                            let state = herdr
+                                .get("status")
+                                .or_else(|| herdr.get("state"))
+                                .and_then(Value::as_str)
+                                .unwrap_or("?");
+                            let turn = herdr.get("turn").and_then(Value::as_i64);
+                            match turn {
+                                Some(turn) => format!("{address} {state} ({turn}t)"),
+                                None => format!("{address} {state}"),
+                            }
                         }
-                    }
-                    None => "-".to_owned(),
-                };
-                vec![
-                    item.get("projectName")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned)
-                        .unwrap_or_else(|| {
-                            item.get("projectPath").and_then(Value::as_str).map(base_name).unwrap_or("-").to_owned()
-                        }),
-                    string(item, "role").unwrap_or_else(|| "?".to_owned()),
-                    item.get("enabled").map(as_bool).unwrap_or_else(|| "?".to_owned()),
-                    nullable(item, "sessionID"),
-                    herdr_cell,
-                ]
-            })
-            .collect();
-        lines.push(table(&["PROJECT", "ROLE", "ENABLED", "SESSION", "HERDR"], &rows));
+                        None => "-".to_owned(),
+                    };
+                    vec![
+                        string(item, "role").unwrap_or_else(|| "?".to_owned()),
+                        item.get("enabled").map(as_bool).unwrap_or_else(|| "?".to_owned()),
+                        nullable(item, "sessionID"),
+                        herdr_cell,
+                    ]
+                })
+                .collect();
+            lines.push(table(&["ROLE", "ENABLED", "SESSION", "HERDR"], &rows));
+        }
     }
 
     let live = value
@@ -355,7 +386,17 @@ fn render_agents(value: &Value) -> String {
                 .collect();
             lines.push(table(&["ADDRESS", "AGENT", "NAME", "WHERE", "STATUS", "TURN"], &rows));
         }
-        _ => {}
+        _ => {
+            lines.push(String::new());
+            let filtered = value.get("filteredOut").and_then(Value::as_i64).unwrap_or(0);
+            if filtered > 0 {
+                lines.push(format!(
+                    "{DIM}Live terminals (hc): none for registered projects ({filtered} from other projects hidden){RESET}"
+                ));
+            } else {
+                lines.push(format!("{DIM}Live terminals (hc): none{RESET}"));
+            }
+        }
     }
     lines.join("\n")
 }
