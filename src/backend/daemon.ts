@@ -70,7 +70,7 @@ function buildHandlers(socket: string): Record<string, Handler> {
     "projects.register": registerProjectHandler,
     "projects.list": () => listProjectsHandler(),
     "projects.get": getProjectHandler,
-    "agents.list": () => agentsListHandler(),
+    "agents.list": agentsListHandler,
     "agents.start": agentsStartHandler,
     "agents.show": agentsShowHandler,
     "agents.stop": agentsStopHandler,

@@ -92,7 +92,11 @@ enum TaskCommands {
 #[derive(Debug, Subcommand)]
 enum AgentCommands {
     /// List agent roles, active runs, and session identifiers.
-    List,
+    List {
+        /// Only show this project (id, name, or path).
+        #[arg(long)]
+        project: Option<String>,
+    },
     /// Start (or resume) a bot agent for a registered project.
     Start {
         /// Bot role to start.
@@ -229,7 +233,7 @@ fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> 
             TaskCommands::Cancel { task_id } => ("tasks.cancel", json!({ "taskId": task_id })),
         },
         Commands::Agents { command } => match command {
-            AgentCommands::List => ("agents.list", json!({})),
+            AgentCommands::List { project } => ("agents.list", json!({ "project": project })),
             AgentCommands::Start {
                 role,
                 mode,

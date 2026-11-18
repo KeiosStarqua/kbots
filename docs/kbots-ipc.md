@@ -42,7 +42,7 @@ Initial CLI methods:
 | `tasks list [--project ID]` | `tasks.list` | optional `project` |
 | `tasks show ID` | `tasks.get` | `taskId` |
 | `tasks cancel ID` | `tasks.cancel` | `taskId` |
-| `agents list` | `agents.list` | `{}` |
+| `agents list [--project REF]` | `agents.list` | `{}` or `{project}` — scopes items/managed/liveTerminals to one project (`filteredBy` set; `registeredProjects` remains the global count) |
 | `agents start ROLE [--mode terminal\|headless] [--project REF] [--fresh]` | `agents.start` | `role`, optional `mode` (default `terminal`), optional `project`, optional `fresh` |
 | `agents show ID` | `agents.show` | `botId` |
 | `agents stop ID` | `agents.stop` | `botId` |

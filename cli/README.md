@@ -17,6 +17,7 @@ kbots tasks add "Implement authentication" --project api-service
 kbots tasks list --project api-service
 kbots tasks show TASK-104
 kbots agents list
+kbots agents list --project PRJ-1   # scope to one project when you have many
 kbots agents start git --mode terminal
 kbots agents start ops --mode headless --project api-service
 kbots agents show AGT-1

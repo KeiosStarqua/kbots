@@ -558,25 +558,39 @@ function sessionIDFromState(state: unknown, role: Role): string | null {
   return typeof value === "string" ? value : null
 }
 
-export async function agentsListHandler(): Promise<Record<string, unknown>> {
+export async function agentsListHandler(params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   await reconcileAgents()
-  const registry = listProjects()
+  const scopeRef = typeof params.project === "string" && params.project.trim() ? params.project.trim() : null
+  let scope: ProjectRow | null = null
+  if (scopeRef) {
+    scope = getProject(scopeRef)
+    if (!scope) throw invalidParams(`unknown project: ${scopeRef}`)
+  }
+  const registry = scope ? [scope] : listProjects()
+  let orphanRegistry = listProjects()
+  if (scope) orphanRegistry = [] // scoped view hides unregistered/orphan state
   const hashMap = new Map<string, ProjectRow>()
-  for (const project of registry) {
+  for (const project of orphanRegistry) {
     hashMap.set(sha256hex(project.path), project)
   }
 
+  const perProject = await Promise.all(
+    registry.map(async (project) => {
+      const { bots, manifestError } = await readManifestBots(project.path)
+      const stateFile = join(stateRoot(), `${sha256hex(project.path)}.json`)
+      let state: unknown = null
+      try {
+        state = JSON.parse(await readFile(stateFile, "utf8"))
+      } catch {
+        state = null
+      }
+      return { project, bots, manifestError, state }
+    }),
+  )
+
   const items: AgentItem[] = []
 
-  for (const project of registry) {
-    const { bots, manifestError } = await readManifestBots(project.path)
-    const stateFile = join(stateRoot(), `${sha256hex(project.path)}.json`)
-    let state: unknown = null
-    try {
-      state = JSON.parse(await readFile(stateFile, "utf8"))
-    } catch {
-      state = null
-    }
+  for (const { project, bots, manifestError, state } of perProject) {
     for (const role of roles) {
       items.push({
         projectId: project.projectId,
@@ -594,10 +608,12 @@ export async function agentsListHandler(): Promise<Record<string, unknown>> {
 
   const root = stateRoot()
   let stateFiles: string[] = []
-  try {
-    stateFiles = (await readdir(root)).filter((entry) => entry.endsWith(".json")).slice(0, maxStateFiles)
-  } catch {
-    stateFiles = []
+  if (!scope) {
+    try {
+      stateFiles = (await readdir(root)).filter((entry) => entry.endsWith(".json")).slice(0, maxStateFiles)
+    } catch {
+      stateFiles = []
+    }
   }
   for (const file of stateFiles) {
     const hash = file.slice(0, -".json".length)
@@ -687,10 +703,12 @@ export async function agentsListHandler(): Promise<Record<string, unknown>> {
     herdrUnavailable = error instanceof Error ? error.message : String(error)
   }
 
+  const managedRows = scope ? listAgents().filter((agent) => agent.projectId === scope.projectId) : listAgents()
+  const allProjects = scope ? listProjects() : registry
   const managed = await Promise.all(
-    listAgents().map(async (agent) => {
+    managedRows.map(async (agent) => {
       const live = await probeAgent(agent)
-      const project = registry.find((candidate) => candidate.projectId === agent.projectId)
+      const project = allProjects.find((candidate) => candidate.projectId === agent.projectId)
       return managedPayload(agent, live, project?.name)
     }),
   )
@@ -700,8 +718,9 @@ export async function agentsListHandler(): Promise<Record<string, unknown>> {
     liveTerminals,
     filteredOut,
     managed,
-    registeredProjects: registry.length,
+    registeredProjects: allProjects.length,
     generatedAt: new Date().toISOString(),
+    ...(scope ? { filteredBy: scope.projectId } : {}),
     ...(herdrUnavailable ? { herdrUnavailable } : {}),
   }
 }
