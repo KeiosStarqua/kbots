@@ -68,22 +68,333 @@ fn rpc(method: &str, params: Value) -> Result<Value, String> {
         .ok_or_else(|| "Daemon response has no result".into())
 }
 
-fn display_result(ui: &MainWindow, result: Result<Value, String>) {
+fn sstr(value: &Value, key: &str) -> String {
+    value
+        .get(key)
+        .map(|v| match v {
+            Value::String(s) => s.clone(),
+            Value::Null => String::new(),
+            other => other.to_string(),
+        })
+        .unwrap_or_default()
+}
+
+fn opt_str(value: &Value, key: &str) -> String {
+    value
+        .get(key)
+        .map(|v| match v {
+            Value::Null => "—".to_string(),
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        })
+        .unwrap_or_else(|| "—".to_string())
+}
+
+fn num(value: &Value, key: &str) -> i64 {
+    value.get(key).and_then(Value::as_i64).unwrap_or(0)
+}
+
+fn shorten(text: &str, keep: usize) -> String {
+    let count = text.chars().count();
+    if count <= keep {
+        return text.to_string();
+    }
+    format!("{}…", text.chars().take(keep).collect::<String>())
+}
+
+fn fmt_uptime(seconds: i64) -> String {
+    if seconds < 0 {
+        return "—".to_string();
+    }
+    let hours = seconds / 3600;
+    let minutes = (seconds % 3600) / 60;
+    let rest = seconds % 60;
+    if hours > 0 {
+        format!("{hours}h {minutes}m")
+    } else if minutes > 0 {
+        format!("{minutes}m {rest}s")
+    } else {
+        format!("{rest}s")
+    }
+}
+
+fn scalar_fmt(value: &Value) -> String {
+    match value {
+        Value::Null => "—".to_string(),
+        Value::String(s) => s.clone(),
+        Value::Array(items) => items.iter().map(scalar_fmt).collect::<Vec<_>>().join(", "),
+        Value::Object(_) => serde_json::to_string(value).unwrap_or_default(),
+        other => other.to_string(),
+    }
+}
+
+fn kv_dump(value: &Value) -> String {
+    match value {
+        Value::Object(map) => map
+            .iter()
+            .map(|(key, item)| format!("{key}: {}", scalar_fmt(item)))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        other => scalar_fmt(other),
+    }
+}
+
+/// Reports an RPC outcome to the connection badge and notice line. Returns the
+/// result value on success so callers can apply it to their own view.
+fn rpc_ok(ui: &MainWindow, result: Result<Value, String>) -> Option<Value> {
     match result {
         Ok(value) => {
             ui.set_connection_text("Connected".into());
             ui.set_connection_ok(true);
-            ui.set_output(
-                serde_json::to_string_pretty(&value)
-                    .unwrap_or_else(|_| value.to_string())
-                    .into(),
-            );
+            ui.set_notice("".into());
+            ui.set_detail("".into());
+            Some(value)
         }
         Err(error) => {
             ui.set_connection_text("Disconnected".into());
             ui.set_connection_ok(false);
-            ui.set_output(error.into());
+            ui.set_notice(error.into());
+            ui.set_detail("".into());
+            None
         }
+    }
+}
+
+fn apply_status(ui: &MainWindow, value: &Value) {
+    let daemon = value.get("daemon").cloned().unwrap_or(Value::Null);
+    let tasks = value.get("tasks").cloned().unwrap_or(Value::Null);
+    let by_status = tasks.get("byStatus").cloned().unwrap_or(Value::Null);
+    let planning = num(&by_status, "planning");
+    let in_progress = num(&by_status, "in_progress");
+    let completed = num(&by_status, "completed");
+    let canceled = num(&by_status, "canceled");
+    let total = num(&tasks, "total");
+    let uptime_seconds = num(&daemon, "uptimeSeconds");
+    let name = sstr(&daemon, "name");
+    let version = sstr(&daemon, "version");
+    ui.set_status(StatusInfo {
+        name: name.clone().into(),
+        version: version.clone().into(),
+        uptime: fmt_uptime(uptime_seconds).into(),
+        projects: num(value, "projects") as i32,
+        tasks_planning: planning as i32,
+        tasks_in_progress: in_progress as i32,
+        tasks_completed: completed as i32,
+        tasks_canceled: canceled as i32,
+        pending_approvals: num(value, "pendingApprovals") as i32,
+        open_detail: format!("{planning} planning · {in_progress} in progress · {total} total").into(),
+        totals_line: format!("{completed} completed · {canceled} canceled").into(),
+        daemon_line: format!(
+            "{name} v{version} · pid {} · socket {}",
+            num(&daemon, "pid"),
+            sstr(&daemon, "socketPath")
+        )
+        .into(),
+    });
+    ui.set_has_status(true);
+}
+
+fn apply_projects(ui: &MainWindow, value: &Value) {
+    let items = value
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mapped = items
+        .iter()
+        .map(|item| ProjectItem {
+            id: sstr(item, "projectId").into(),
+            name: sstr(item, "name").into(),
+            path: sstr(item, "path").into(),
+            bot_roles: item
+                .get("botRoles")
+                .map(|v| match v {
+                    Value::Array(roles) => roles
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    other => other.to_string(),
+                })
+                .unwrap_or_default()
+                .into(),
+            created: sstr(item, "createdAt").into(),
+        })
+        .collect::<Vec<_>>();
+    ui.set_projects(std::rc::Rc::new(slint::VecModel::from(mapped)).into());
+}
+
+fn apply_tasks(ui: &MainWindow, value: &Value) {
+    let items = value
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mapped = items
+        .iter()
+        .map(|item| TaskItem {
+            id: sstr(item, "taskId").into(),
+            title: sstr(item, "title").into(),
+            status: sstr(item, "status").into(),
+            project: sstr(item, "projectId").into(),
+            created: sstr(item, "createdAt").into(),
+        })
+        .collect::<Vec<_>>();
+    ui.set_tasks(std::rc::Rc::new(slint::VecModel::from(mapped)).into());
+}
+
+fn apply_agents(ui: &MainWindow, value: &Value) {
+    let items = value
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let bindings = items
+        .iter()
+        .map(|item| {
+            let registered = item.get("registered").and_then(Value::as_bool).unwrap_or(false);
+            let project = item
+                .get("projectName")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .unwrap_or_else(|| shorten(&sstr(item, "projectPath"), 48));
+            let enabled = match item.get("enabled") {
+                Some(Value::Bool(true)) => "enabled",
+                Some(Value::Bool(false)) => "disabled",
+                _ => "—",
+            };
+            let session = opt_str(item, "sessionID");
+            let session = if session == "—" {
+                session
+            } else {
+                shorten(&session, 12)
+            };
+            let herdr = item
+                .get("herdr")
+                .map(|herdr| {
+                    [
+                        sstr(herdr, "state"),
+                        sstr(herdr, "status"),
+                    ]
+                    .into_iter()
+                    .filter(|part| !part.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+                })
+                .unwrap_or_default();
+            AgentBindingItem {
+                project: project.into(),
+                role: sstr(item, "role").into(),
+                enabled: enabled.into(),
+                session: session.into(),
+                herdr: herdr.into(),
+                registered,
+            }
+        })
+        .collect::<Vec<_>>();
+    ui.set_agent_bindings(std::rc::Rc::new(slint::VecModel::from(bindings)).into());
+
+    let managed = value
+        .get("managed")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mapped = managed
+        .iter()
+        .map(|item| ManagedAgentItem {
+            id: sstr(item, "id").into(),
+            project: item
+                .get("projectName")
+                .or_else(|| item.get("projectId"))
+                .map(|v| match v {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                })
+                .unwrap_or_else(|| "—".to_string())
+                .into(),
+            role: sstr(item, "role").into(),
+            mode: sstr(item, "mode").into(),
+            status: sstr(item, "status").into(),
+            name: sstr(item, "name").into(),
+            last_error: sstr(item, "lastError").into(),
+        })
+        .collect::<Vec<_>>();
+    ui.set_managed_agents(std::rc::Rc::new(slint::VecModel::from(mapped)).into());
+
+    if let Some(unavailable) = value.get("herdrUnavailable").and_then(Value::as_str) {
+        ui.set_notice(format!("herdr unavailable: {unavailable}").into());
+    }
+}
+
+fn apply_approvals(ui: &MainWindow, value: &Value) {
+    let items = value
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mapped = items
+        .iter()
+        .map(|item| {
+            let target = [
+                sstr(item, "projectId"),
+                sstr(item, "taskId"),
+            ]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("  ·  ");
+            ApprovalItem {
+                id: sstr(item, "approvalId").into(),
+                operation: sstr(item, "operation").into(),
+                detail: sstr(item, "detail").into(),
+                target: target.into(),
+                status: sstr(item, "status").into(),
+                created: sstr(item, "createdAt").into(),
+            }
+        })
+        .collect::<Vec<_>>();
+    ui.set_approvals(std::rc::Rc::new(slint::VecModel::from(mapped)).into());
+}
+
+fn apply_events(ui: &MainWindow, value: &Value) {
+    let items = value
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mapped = items
+        .iter()
+        .map(|item| EventItem {
+            ts: sstr(item, "ts").into(),
+            kind: sstr(item, "kind").into(),
+            message: sstr(item, "message").into(),
+        })
+        .collect::<Vec<_>>();
+    ui.set_events(std::rc::Rc::new(slint::VecModel::from(mapped)).into());
+}
+
+/// Best-effort list reloads used after a mutation so the notice keeps showing
+/// the mutation result; failures are silent and leave the model untouched.
+fn refresh_projects(ui: &MainWindow) {
+    if let Ok(value) = rpc("projects.list", json!({})) {
+        apply_projects(ui, &value);
+    }
+}
+
+fn refresh_tasks(ui: &MainWindow, filter: &str) {
+    let params = if filter.is_empty() {
+        json!({})
+    } else {
+        json!({"project": filter})
+    };
+    if let Ok(value) = rpc("tasks.list", params) {
+        apply_tasks(ui, &value);
+    }
+}
+
+fn refresh_approvals(ui: &MainWindow) {
+    if let Ok(value) = rpc("approvals.list", json!({})) {
+        apply_approvals(ui, &value);
     }
 }
 
@@ -113,7 +424,9 @@ fn main() -> Result<(), slint::PlatformError> {
     let weak = ui.as_weak();
     ui.on_refresh(move || {
         if let Some(ui) = weak.upgrade() {
-            display_result(&ui, rpc("system.status", json!({})));
+            if let Some(value) = rpc_ok(&ui, rpc("system.status", json!({}))) {
+                apply_status(&ui, &value);
+            }
         }
     });
 
@@ -121,17 +434,9 @@ fn main() -> Result<(), slint::PlatformError> {
     ui.on_load_tasks(move || {
         if let Some(ui) = weak.upgrade() {
             let project = ui.get_filter_project().trim().to_string();
-            display_result(
-                &ui,
-                rpc(
-                    "tasks.list",
-                    if project.is_empty() {
-                        json!({})
-                    } else {
-                        json!({"project":project})
-                    },
-                ),
-            );
+            if let Some(value) = rpc_ok(&ui, rpc("tasks.list", if project.is_empty() { json!({}) } else { json!({"project": project}) })) {
+                apply_tasks(&ui, &value);
+            }
         }
     });
     let weak = ui.as_weak();
@@ -140,14 +445,18 @@ fn main() -> Result<(), slint::PlatformError> {
             let title = ui.get_task_title().trim().to_string();
             let project = ui.get_task_project().trim().to_string();
             if title.is_empty() {
-                ui.set_output("Enter a task description first.".into());
+                ui.set_notice("Enter a task description first.".into());
                 return;
             }
             let mut params = json!({"title":title});
             if !project.is_empty() {
                 params["project"] = json!(project);
             }
-            display_result(&ui, rpc("tasks.create", params));
+            if let Some(value) = rpc_ok(&ui, rpc("tasks.create", params)) {
+                let task_id = sstr(&value, "taskId");
+                ui.set_notice(format!("Created {task_id}").into());
+                refresh_tasks(&ui, &ui.get_filter_project().trim().to_string());
+            }
         }
     });
     let weak = ui.as_weak();
@@ -155,16 +464,22 @@ fn main() -> Result<(), slint::PlatformError> {
         if let Some(ui) = weak.upgrade() {
             let id = ui.get_item_id().trim().to_string();
             if id.is_empty() {
-                ui.set_output("Enter a task ID first.".into());
+                ui.set_notice("Enter a task ID first.".into());
                 return;
             }
-            display_result(&ui, rpc("tasks.cancel", json!({"taskId":id})));
+            if let Some(value) = rpc_ok(&ui, rpc("tasks.cancel", json!({"taskId":id}))) {
+                let task_id = sstr(&value, "taskId");
+                ui.set_notice(format!("Canceled {task_id}").into());
+                refresh_tasks(&ui, &ui.get_filter_project().trim().to_string());
+            }
         }
     });
     let weak = ui.as_weak();
     ui.on_load_projects(move || {
         if let Some(ui) = weak.upgrade() {
-            display_result(&ui, rpc("projects.list", json!({})));
+            if let Some(value) = rpc_ok(&ui, rpc("projects.list", json!({}))) {
+                apply_projects(&ui, &value);
+            }
         }
     });
     let weak = ui.as_weak();
@@ -173,16 +488,26 @@ fn main() -> Result<(), slint::PlatformError> {
             let path = ui.get_project_path().trim().to_string();
             let name = ui.get_project_name().trim().to_string();
             if path.is_empty() {
-                ui.set_output("Enter an existing project directory.".into());
+                ui.set_notice("Enter an existing project directory.".into());
                 return;
             }
-            display_result(
-                &ui,
-                rpc(
-                    "projects.register",
-                    json!({"path":path,"name":name,"botRoles":["ceo","git","ops"]}),
-                ),
-            );
+            let mut params = json!({"path":path,"botRoles":["ceo","git","ops"]});
+            if !name.is_empty() {
+                params["name"] = json!(name);
+            }
+            if let Some(value) = rpc_ok(&ui, rpc("projects.register", params)) {
+                let project_id = sstr(&value, "projectId");
+                let created = value.get("created").and_then(Value::as_bool).unwrap_or(false);
+                ui.set_notice(
+                    if created {
+                        format!("Registered new project {project_id}")
+                    } else {
+                        format!("Updated existing registration {project_id}")
+                    }
+                    .into(),
+                );
+                refresh_projects(&ui);
+            }
         }
     });
     let weak = ui.as_weak();
@@ -190,7 +515,7 @@ fn main() -> Result<(), slint::PlatformError> {
         if let Some(ui) = weak.upgrade() {
             let path = ui.get_project_path().trim().to_string();
             if path.is_empty() {
-                ui.set_output("Enter the project directory to configure.".into());
+                ui.set_notice("Enter the project directory to configure.".into());
                 return;
             }
             let weak = ui.as_weak();
@@ -206,7 +531,10 @@ fn main() -> Result<(), slint::PlatformError> {
                     ),
                     Err(error) => format!("Could not run kbots project configure: {error}"),
                 };
-                let _ = weak.upgrade_in_event_loop(move |ui| ui.set_output(message.into()));
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    ui.set_notice("".into());
+                    ui.set_detail(message.into());
+                });
             });
         }
     });
@@ -215,7 +543,7 @@ fn main() -> Result<(), slint::PlatformError> {
         if let Some(ui) = weak.upgrade() {
             let path = ui.get_project_path().trim().to_string();
             if path.is_empty() {
-                ui.set_output("Enter the project directory to start its bot sessions.".into());
+                ui.set_notice("Enter the project directory to start its bot sessions.".into());
                 return;
             }
             let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -235,20 +563,27 @@ fn main() -> Result<(), slint::PlatformError> {
                     ),
                     Err(error) => format!("Could not start bot sessions: {error}"),
                 };
-                let _ = weak.upgrade_in_event_loop(move |ui| ui.set_output(message.into()));
+                let _ = weak.upgrade_in_event_loop(move |ui| {
+                    ui.set_notice("".into());
+                    ui.set_detail(message.into());
+                });
             });
         }
     });
     let weak = ui.as_weak();
     ui.on_load_agents(move || {
         if let Some(ui) = weak.upgrade() {
-            display_result(&ui, rpc("agents.list", json!({})));
+            if let Some(value) = rpc_ok(&ui, rpc("agents.list", json!({}))) {
+                apply_agents(&ui, &value);
+            }
         }
     });
     let weak = ui.as_weak();
     ui.on_load_approvals(move || {
         if let Some(ui) = weak.upgrade() {
-            display_result(&ui, rpc("approvals.list", json!({})));
+            if let Some(value) = rpc_ok(&ui, rpc("approvals.list", json!({}))) {
+                apply_approvals(&ui, &value);
+            }
         }
     });
     let weak = ui.as_weak();
@@ -256,16 +591,22 @@ fn main() -> Result<(), slint::PlatformError> {
         if let Some(ui) = weak.upgrade() {
             let id = ui.get_item_id().trim().to_string();
             if id.is_empty() {
-                ui.set_output("Enter an approval ID first.".into());
+                ui.set_notice("Enter an approval ID first.".into());
                 return;
             }
-            display_result(&ui, rpc("approvals.approve", json!({"approvalId":id})));
+            if let Some(value) = rpc_ok(&ui, rpc("approvals.approve", json!({"approvalId":id}))) {
+                let approval_id = sstr(&value, "approvalId");
+                ui.set_notice(format!("Approved {approval_id}").into());
+                refresh_approvals(&ui);
+            }
         }
     });
     let weak = ui.as_weak();
     ui.on_load_activity(move || {
         if let Some(ui) = weak.upgrade() {
-            display_result(&ui, rpc("events.list", json!({"limit":100})));
+            if let Some(value) = rpc_ok(&ui, rpc("events.list", json!({"limit":100}))) {
+                apply_events(&ui, &value);
+            }
         }
     });
     let weak = ui.as_weak();
@@ -273,7 +614,7 @@ fn main() -> Result<(), slint::PlatformError> {
         if let Some(ui) = weak.upgrade() {
             let id = ui.get_item_id().trim().to_string();
             if id.is_empty() {
-                ui.set_output("Enter a task or project ID first.".into());
+                ui.set_notice("Enter a task or project ID first.".into());
                 return;
             }
             let page = ui.get_active_page().to_string();
@@ -282,7 +623,9 @@ fn main() -> Result<(), slint::PlatformError> {
             } else {
                 ("tasks.get", "taskId")
             };
-            display_result(&ui, rpc(method, json!({key:id})));
+            if let Some(value) = rpc_ok(&ui, rpc(method, json!({key:id}))) {
+                ui.set_detail(kv_dump(&value).into());
+            }
         }
     });
 

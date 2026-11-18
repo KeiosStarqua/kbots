@@ -2,6 +2,13 @@ import { Button, CheckBox, LineEdit, ScrollView } from "std-widgets.slint";
 
 export struct TerminalCell { text: string, foreground: color, background: color, bold: bool, italic: bool, underline: bool }
 export struct TerminalItem { address: string, name: string, cwd: string, agent: string, status: string }
+export struct StatusInfo { name: string, version: string, uptime: string, projects: int, tasks-planning: int, tasks-in-progress: int, tasks-completed: int, tasks-canceled: int, pending-approvals: int, open-detail: string, totals-line: string, daemon-line: string }
+export struct ProjectItem { id: string, name: string, path: string, bot-roles: string, created: string }
+export struct TaskItem { id: string, title: string, status: string, project: string, created: string }
+export struct AgentBindingItem { project: string, role: string, enabled: string, session: string, herdr: string, registered: bool }
+export struct ManagedAgentItem { id: string, project: string, role: string, mode: string, status: string, name: string, last-error: string }
+export struct ApprovalItem { id: string, operation: string, detail: string, target: string, status: string, created: string }
+export struct EventItem { ts: string, kind: string, message: string }
 
 export component MainWindow inherits Window {
     title: "kbots Control Center";
@@ -12,7 +19,16 @@ export component MainWindow inherits Window {
     background: #101512;
 
     in-out property <string> active-page: "Overview";
-    in-out property <string> output: "Select a page action to load live daemon data.";
+    in-out property <string> notice: "";
+    in-out property <string> detail: "";
+    in-out property <bool> has-status: false;
+    in-out property <StatusInfo> status: { name: "", version: "", uptime: "", projects: 0, tasks-planning: 0, tasks-in-progress: 0, tasks-completed: 0, tasks-canceled: 0, pending-approvals: 0, open-detail: "", totals-line: "", daemon-line: "" };
+    in-out property <[ProjectItem]> projects: [];
+    in-out property <[TaskItem]> tasks: [];
+    in-out property <[AgentBindingItem]> agent-bindings: [];
+    in-out property <[ManagedAgentItem]> managed-agents: [];
+    in-out property <[ApprovalItem]> approvals: [];
+    in-out property <[EventItem]> events: [];
     in-out property <string> connection-text: "Checking connection…";
     in-out property <bool> connection-ok: false;
     in-out property <string> task-title;
@@ -90,6 +106,51 @@ export component MainWindow inherits Window {
                         spacing: 14px;
                         Text { text: "Live workspace status"; color: #9daaa1; }
                         Button { text: "Load system status"; clicked => { root.refresh(); } }
+                        if !root.has-status: Text { text: "Load the daemon status to see projects, tasks, and approvals at a glance."; color: #86948b; wrap: word-wrap; }
+                        if root.has-status: VerticalLayout {
+                            spacing: 12px;
+                            HorizontalLayout {
+                                spacing: 12px;
+                                Rectangle {
+                                    horizontal-stretch: 1; height: 96px; background: #141b17; border-radius: 10px; border-width: 1px; border-color: #28332c;
+                                    VerticalLayout {
+                                        padding: 14px; spacing: 4px;
+                                        Text { text: "PROJECTS"; color: #86948b; font-size: 10px; font-weight: 700; }
+                                        Text { text: root.status.projects; color: #eff5f0; font-size: 28px; font-weight: 700; }
+                                        Text { text: "registered"; color: #86948b; font-size: 11px; }
+                                    }
+                                }
+                                Rectangle {
+                                    horizontal-stretch: 1; height: 96px; background: #141b17; border-radius: 10px; border-width: 1px; border-color: #28332c;
+                                    VerticalLayout {
+                                        padding: 14px; spacing: 4px;
+                                        Text { text: "OPEN TASKS"; color: #86948b; font-size: 10px; font-weight: 700; }
+                                        Text { text: root.status.tasks-planning + root.status.tasks-in-progress; color: #eff5f0; font-size: 28px; font-weight: 700; }
+                                        Text { text: root.status.open-detail; color: #86948b; font-size: 11px; }
+                                    }
+                                }
+                                Rectangle {
+                                    horizontal-stretch: 1; height: 96px; background: #141b17; border-radius: 10px; border-width: 1px; border-color: #28332c;
+                                    VerticalLayout {
+                                        padding: 14px; spacing: 4px;
+                                        Text { text: "PENDING APPROVALS"; color: #86948b; font-size: 10px; font-weight: 700; }
+                                        Text { text: root.status.pending-approvals; color: root.status.pending-approvals > 0 ? #f0c674 : #eff5f0; font-size: 28px; font-weight: 700; }
+                                        Text { text: "waiting for review"; color: #86948b; font-size: 11px; }
+                                    }
+                                }
+                                Rectangle {
+                                    horizontal-stretch: 1; height: 96px; background: #141b17; border-radius: 10px; border-width: 1px; border-color: #28332c;
+                                    VerticalLayout {
+                                        padding: 14px; spacing: 4px;
+                                        Text { text: "DAEMON"; color: #86948b; font-size: 10px; font-weight: 700; }
+                                        Text { text: root.status.uptime; color: #eff5f0; font-size: 22px; font-weight: 700; vertical-alignment: center; }
+                                        Text { text: root.status.name + " v" + root.status.version; color: #86948b; font-size: 11px; }
+                                    }
+                                }
+                            }
+                            Text { text: root.status.totals-line; color: #dce6de; font-size: 13px; }
+                            Text { text: root.status.daemon-line; color: #9daaa1; font-size: 11px; font-family: "monospace"; wrap: word-wrap; }
+                        }
                         Text { text: "Use the sections at left to manage projects, tasks, agents, approvals, and activity."; color: #9daaa1; wrap: word-wrap; }
                     }
                     if root.active-page == "Projects": VerticalLayout {
@@ -104,6 +165,25 @@ export component MainWindow inherits Window {
                             Button { text: "List projects"; clicked => { root.load-projects(); } }
                             LineEdit { placeholder-text: "Project ID"; text <=> root.item-id; }
                             Button { text: "Show project"; clicked => { root.show-item(); } }
+                        }
+                        if root.projects.length > 0: VerticalLayout {
+                            spacing: 8px;
+                            Text { text: "REGISTERED PROJECTS"; color: #86948b; font-size: 10px; font-weight: 700; }
+                            for project in root.projects: Rectangle {
+                                height: 76px; background: #141b17; border-radius: 8px; border-width: 1px; border-color: #28332c;
+                                VerticalLayout {
+                                    padding: 10px; spacing: 3px;
+                                    HorizontalLayout { spacing: 8px;
+                                        Text { text: project.name; color: #eff5f0; font-size: 13px; font-weight: 700; vertical-alignment: center; }
+                                        Text { text: project.id; color: #a5d6a7; font-family: "monospace"; font-size: 11px; vertical-alignment: center; }
+                                        Rectangle { horizontal-stretch: 1; }
+                                        Text { text: project.created; color: #86948b; font-size: 10px; vertical-alignment: center; }
+                                    }
+                                    Text { text: project.path; color: #9daaa1; font-size: 11px; font-family: "monospace"; wrap: word-wrap; }
+                                    Text { text: "bots: " + project.bot-roles; color: #86948b; font-size: 10px; }
+                                }
+                                TouchArea { clicked => { root.item-id = project.id; } }
+                            }
                         }
                     }
                     if root.active-page == "Tasks": VerticalLayout {
@@ -121,10 +201,71 @@ export component MainWindow inherits Window {
                             Button { text: "Show task"; clicked => { root.show-item(); } }
                             Button { text: "Cancel task"; clicked => { root.cancel-task(); } }
                         }
+                        if root.tasks.length > 0: VerticalLayout {
+                            spacing: 8px;
+                            Text { text: "TASKS"; color: #86948b; font-size: 10px; font-weight: 700; }
+                            for task in root.tasks: Rectangle {
+                                height: 66px; background: #141b17; border-radius: 8px; border-width: 1px; border-color: #28332c;
+                                VerticalLayout {
+                                    padding: 10px; spacing: 3px;
+                                    HorizontalLayout { spacing: 10px;
+                                        Text { text: task.id; color: #a5d6a7; font-family: "monospace"; font-size: 11px; vertical-alignment: center; }
+                                        Text { text: task.title; color: #eff5f0; font-size: 13px; font-weight: 600; vertical-alignment: center; wrap: word-wrap; }
+                                        Rectangle { horizontal-stretch: 1; }
+                                        Rectangle {
+                                            height: 22px; width: 96px; border-radius: 11px; background: #243029;
+                                            Text { text: task.status; color: task.status == "completed" ? #a5d6a7 : task.status == "canceled" ? #86948b : #f0c674; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                                        }
+                                    }
+                                    Text { text: (task.project != "" ? task.project : "no project") + "  ·  " + task.created; color: #86948b; font-size: 10px; font-family: "monospace"; }
+                                }
+                                TouchArea { clicked => { root.item-id = task.id; } }
+                            }
+                        }
                     }
-                    if root.active-page == "Agents": HorizontalLayout {
-                        Button { text: "List agents"; clicked => { root.load-agents(); } }
-                        Text { text: "Agent execution and sessions are owned by the daemon."; color: #9daaa1; vertical-alignment: center; }
+                    if root.active-page == "Agents": VerticalLayout {
+                        spacing: 12px;
+                        HorizontalLayout { spacing: 8px;
+                            Button { text: "List agents"; clicked => { root.load-agents(); } }
+                            Text { text: "Agent execution and sessions are owned by the daemon."; color: #9daaa1; vertical-alignment: center; }
+                        }
+                        if root.managed-agents.length > 0: VerticalLayout {
+                            spacing: 8px;
+                            Text { text: "MANAGED AGENTS"; color: #86948b; font-size: 10px; font-weight: 700; }
+                            for agent in root.managed-agents: Rectangle {
+                                height: 60px; background: #141b17; border-radius: 8px; border-width: 1px; border-color: #28332c;
+                                VerticalLayout {
+                                    padding: 10px; spacing: 3px;
+                                    HorizontalLayout { spacing: 10px;
+                                        Text { text: agent.id; color: #a5d6a7; font-family: "monospace"; font-size: 11px; vertical-alignment: center; }
+                                        Text { text: agent.role + " · " + agent.mode; color: #eff5f0; font-size: 12px; font-weight: 700; vertical-alignment: center; }
+                                        Text { text: agent.name; color: #9daaa1; font-size: 11px; vertical-alignment: center; }
+                                        Rectangle { horizontal-stretch: 1; }
+                                        Text { text: agent.status; color: agent.status == "running" ? #a5d6a7 : agent.status == "error" ? #e57373 : agent.status == "stopped" ? #86948b : #f0c674; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+                                    }
+                                    Text { text: agent.project + (agent.last-error != "" ? "  ·  error: " + agent.last-error : ""); color: agent.last-error != "" ? #e57373 : #86948b; font-size: 10px; wrap: word-wrap; }
+                                }
+                            }
+                        }
+                        if root.agent-bindings.length > 0: VerticalLayout {
+                            spacing: 8px;
+                            Text { text: "ROLE BINDINGS"; color: #86948b; font-size: 10px; font-weight: 700; }
+                            for binding in root.agent-bindings: Rectangle {
+                                height: 52px; background: #141b17; border-radius: 8px; border-width: 1px; border-color: #28332c;
+                                VerticalLayout {
+                                    padding: 10px; spacing: 3px;
+                                    HorizontalLayout { spacing: 10px;
+                                        Text { text: binding.role; color: #eff5f0; font-family: "monospace"; font-size: 12px; font-weight: 700; width: 40px; vertical-alignment: center; }
+                                        Text { text: binding.project; color: #9daaa1; font-size: 11px; vertical-alignment: center; wrap: word-wrap; }
+                                        Rectangle { horizontal-stretch: 1; }
+                                        Text { text: binding.enabled; color: binding.enabled == "enabled" ? #a5d6a7 : binding.enabled == "disabled" ? #86948b : #9daaa1; font-size: 10px; vertical-alignment: center; }
+                                        if binding.herdr != "": Text { text: binding.herdr; color: #f0c674; font-size: 10px; vertical-alignment: center; }
+                                        if !binding.registered: Text { text: "not registered"; color: #f0c674; font-size: 10px; vertical-alignment: center; }
+                                    }
+                                    Text { text: "session " + binding.session; color: #86948b; font-size: 9px; font-family: "monospace"; }
+                                }
+                            }
+                        }
                     }
                     if root.active-page == "Terminals": VerticalLayout {
                         spacing: 10px;
@@ -209,10 +350,51 @@ export component MainWindow inherits Window {
                             LineEdit { placeholder-text: "Approval ID"; text <=> root.item-id; }
                             Button { text: "Approve"; clicked => { root.approve(); } }
                         }
+                        if root.approvals.length > 0: VerticalLayout {
+                            spacing: 8px;
+                            Text { text: "APPROVALS"; color: #86948b; font-size: 10px; font-weight: 700; }
+                            for approval in root.approvals: Rectangle {
+                                height: approval.detail != "" ? 76px : 56px; background: #141b17; border-radius: 8px; border-width: 1px; border-color: #28332c;
+                                VerticalLayout {
+                                    padding: 10px; spacing: 3px;
+                                    HorizontalLayout { spacing: 10px;
+                                        Text { text: approval.id; color: #a5d6a7; font-family: "monospace"; font-size: 11px; vertical-alignment: center; }
+                                        Text { text: approval.operation; color: #eff5f0; font-size: 13px; font-weight: 700; vertical-alignment: center; }
+                                        Rectangle { horizontal-stretch: 1; }
+                                        Rectangle {
+                                            height: 22px; width: 84px; border-radius: 11px; background: #243029;
+                                            Text { text: approval.status; color: approval.status == "approved" ? #a5d6a7 : #f0c674; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                                        }
+                                    }
+                                    if approval.detail != "": Text { text: approval.detail; color: #9daaa1; font-size: 11px; wrap: word-wrap; }
+                                    Text { text: approval.target + "  ·  " + approval.created; color: #86948b; font-size: 10px; font-family: "monospace"; }
+                                }
+                                TouchArea { clicked => { root.item-id = approval.id; } }
+                            }
+                        }
                     }
-                    if root.active-page == "Activity log": HorizontalLayout {
-                        Button { text: "Load recent activity"; clicked => { root.load-activity(); } }
-                        Text { text: "Returns the latest events exposed by the daemon."; color: #9daaa1; vertical-alignment: center; }
+                    if root.active-page == "Activity log": VerticalLayout {
+                        spacing: 10px;
+                        HorizontalLayout { spacing: 8px;
+                            Button { text: "Load recent activity"; clicked => { root.load-activity(); } }
+                            Text { text: "Returns the latest events exposed by the daemon."; color: #9daaa1; vertical-alignment: center; }
+                        }
+                        if root.events.length > 0: VerticalLayout {
+                            spacing: 8px;
+                            Text { text: "RECENT EVENTS"; color: #86948b; font-size: 10px; font-weight: 700; }
+                            for event in root.events: Rectangle {
+                                height: 52px; background: #141b17; border-radius: 8px; border-width: 1px; border-color: #28332c;
+                                VerticalLayout {
+                                    padding: 10px; spacing: 3px;
+                                    HorizontalLayout { spacing: 10px;
+                                        Text { text: event.ts; color: #86948b; font-family: "monospace"; font-size: 10px; vertical-alignment: center; }
+                                        Text { text: event.kind; color: #a5d6a7; font-family: "monospace"; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+                                        Rectangle { horizontal-stretch: 1; }
+                                    }
+                                    Text { text: event.message; color: #dce6de; font-size: 12px; wrap: word-wrap; }
+                                }
+                            }
+                        }
                     }
                     if root.active-page == "Settings": VerticalLayout {
                         spacing: 8px;
@@ -221,11 +403,11 @@ export component MainWindow inherits Window {
                         Button { text: "Check daemon"; clicked => { root.refresh(); } }
                     }
                     Rectangle { height: 1px; background: #28332c; }
-                    Text { text: "RESULT"; color: #86948b; font-size: 10px; font-weight: 700; }
-                    Rectangle {
-                        background: #141b17; border-radius: 10px; border-width: 1px; border-color: #28332c;
-                        min-height: 300px;
-                        Text { text: root.output; color: #dce6de; font-size: 13px; font-family: "monospace"; wrap: word-wrap; x: 16px; y: 14px; width: parent.width - 32px; height: parent.height - 28px; vertical-alignment: top; }
+                    if root.notice != "": Text { text: root.notice; color: #f0c674; font-size: 12px; wrap: word-wrap; }
+                    if root.detail != "": VerticalLayout {
+                        spacing: 6px;
+                        Text { text: "RESULT"; color: #86948b; font-size: 10px; font-weight: 700; }
+                        Text { text: root.detail; color: #dce6de; font-size: 12px; font-family: "monospace"; wrap: word-wrap; }
                     }
                 }
             }
