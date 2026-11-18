@@ -92,6 +92,34 @@ else
   printf '\nsystemd user session unavailable; start the daemon manually with `bun run daemon`.\n'
 fi
 
+# Tag the deployed commit with a CalVer deploy tag so every deploy is
+# traceable in git (git tag -l 'deploy/*'). Stable releases use SemVer
+# tags (vX.Y.Z) instead; the daemon reports the recorded version, or the
+# DAEMON_VERSION SemVer when no deploy version is recorded.
+if command -v git >/dev/null 2>&1 && git -C "${repo_root}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  deploy_date="$(date +%Y.%m.%d)"
+  deploy_n=1
+  while git -C "${repo_root}" rev-parse -q --verify "refs/tags/deploy/${deploy_date}.${deploy_n}" >/dev/null 2>&1; do
+    deploy_n=$((deploy_n + 1))
+  done
+  deploy_version="${deploy_date}.${deploy_n}"
+  deploy_tag="deploy/${deploy_version}"
+  if [[ -n "$(git -C "${repo_root}" status --porcelain)" ]]; then
+    deploy_record="${deploy_version}+dirty"
+    printf '\nWARNING: the working tree has uncommitted changes; the deployed code is not exactly tag %s.\n' "${deploy_tag}" >&2
+  else
+    deploy_record="${deploy_version}"
+  fi
+  if git -C "${repo_root}" tag -a "${deploy_tag}" -m "Deploy ${deploy_tag} ($(git -C "${repo_root}" rev-parse --short HEAD))"; then
+    printf '%s\n' "${deploy_record}" > "${repo_root}/.deploy-version"
+    printf 'Tagged deploy: %s (recorded in .deploy-version; `kb status` reports it)\n' "${deploy_tag}"
+  else
+    printf '\nWARNING: could not create deploy tag %s; daemon will report the SemVer constant.\n' "${deploy_tag}" >&2
+  fi
+else
+  printf '\nNote: git not available or not a work tree; skipping deploy tag and .deploy-version.\n'
+fi
+
 case ":${PATH}:" in
   *":${install_dir}:"*) ;;
   *) printf 'Add %s to PATH to run these commands by name.\n' "${install_dir}" ;;

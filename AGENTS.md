@@ -22,7 +22,9 @@
   code, so never skip this step; use `KBOTS_SKIP_DAEMON_UNIT=1 ./install.sh`
   only when explicitly unwanted, and then restart the daemon yourself
   (`systemctl --user restart kbots-daemon`). Use `KBOTS_INSTALL_DIR` when the
-  default `~/.local/bin` is not the intended destination.
+  default `~/.local/bin` is not the intended destination. Every deploy is
+  tagged `deploy/YYYY.MM.DD.n` (CalVer, local) and stamped in `.deploy-version`;
+  stable releases use SemVer `vX.Y.Z` tags. See `docs/deployment.md`.
 - Keep backend modules separated by responsibility: `cli/`, `opencode/`,
   `orchestrator/`, `bots/`, `workflows/`, `adapters/`, and `db/`.
 

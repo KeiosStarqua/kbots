@@ -46,7 +46,13 @@ order:
      ~10s (50 × 0.2s) for the socket to appear — never fails the install if
      it does not. `Type=simple` means systemd reports the unit active before
      the daemon actually binds the socket.
-8. Warns if the install dir is not on `PATH`.
+8. Tags the deployed commit with a CalVer deploy tag (`deploy/YYYY.MM.DD.n`,
+   annotated) and writes `.deploy-version`. Runs on every successful deploy,
+   including without systemd; skipped with a note when git is unavailable or
+   the repo root is not a work tree. If the working tree is dirty, the
+   recorded version gets a `+dirty` suffix and a warning is printed. See
+   "Deploy tags and versioning (SemVer + CalVer)" below.
+9. Warns if the install dir is not on `PATH`.
 
 `./install.sh` is the deploy path: clients and the daemon must run freshly
 deployed code, so never skip it after code changes. Use
@@ -62,6 +68,43 @@ login and auto-restarts. The socket defaults to `$XDG_RUNTIME_DIR/kbots.sock`
 (falling back to `$HOME/.local/run/kbots.sock`); set `KBOTS_SOCKET` in the
 unit to override.
 
+## Deploy tags and versioning (SemVer + CalVer)
+
+Two tag lines coexist, because stable releases and continuous deploys have
+different cadences:
+
+- **Stable releases — SemVer** (`vX.Y.Z`, e.g. `v0.1.0`). Created manually on
+  a release commit. `DAEMON_VERSION` in `src/backend/orchestrator/system.ts`
+  is the SemVer source of truth; bump it in the release commit to match the
+  tag.
+- **Deploys — CalVer** (`deploy/YYYY.MM.DD.n`, e.g. `deploy/2026.11.19.1`).
+  Created automatically by `./install.sh` after every successful deploy: an
+  annotated tag on the deployed commit (`n` is the per-day deploy counter),
+  plus `.deploy-version` (untracked, gitignored) holding the same string.
+  This is for the fast, commit-often agent-development pace — every deploy
+  is traceable without cutting a release.
+
+The daemon reports the deploy version in `system.status` (`kb status`):
+`.deploy-version` wins when present, then `KBOTS_DEPLOY_VERSION` (useful for
+manual runs) if set, else the SemVer `DAEMON_VERSION`. If the working tree
+was dirty at deploy time, the recorded version carries a `+dirty` suffix
+(e.g. `2026.11.19.1+dirty`) and `install.sh` prints a warning — the running
+code is then not exactly the tagged commit.
+
+Checking what is deployed / deploy history:
+
+```sh
+kb status                      # version of the running daemon
+git tag -l 'deploy/*'          # every deploy, oldest first
+git log --oneline deploy/2026.11.19.1..HEAD   # changes since that deploy
+git diff deploy/2026.11.19.1 deploy/2026.11.19.2   # what changed between two deploys
+```
+
+Deploy tags are created locally by `./install.sh` and are not pushed
+automatically; run `git push origin --tags` if you want them on the remote.
+(CI/CD and remote servers remain out of scope; this repo deploys from a
+laptop working tree.)
+
 ## Verifying the deployment
 
 Check the daemon is up (`kb` is the symlink to `kbots`):
@@ -74,7 +117,7 @@ Prints daemon name/pid/socketPath/uptime/version, pendingApprovals, and
 project/task counts; JSON when piped or with `--json`. Sample (real, trimmed):
 
 ```json
-{"daemon":{"name":"kbots-daemon","pid":416345,"socketPath":"/run/user/1000/kbots.sock","uptimeSeconds":355,"version":"0.1.0"}, ...}
+{"daemon":{"name":"kbots-daemon","pid":416345,"socketPath":"/run/user/1000/kbots.sock","uptimeSeconds":355,"version":"2026.11.19.1"}, ...}
 ```
 
 The socket: default path is `$XDG_RUNTIME_DIR/kbots.sock`, fallback

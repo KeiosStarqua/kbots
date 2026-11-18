@@ -1,6 +1,9 @@
 # dependencies (bun install)
 node_modules
 
+# last deploy stamp (written by ./install.sh)
+.deploy-version
+
 # output
 out
 dist
