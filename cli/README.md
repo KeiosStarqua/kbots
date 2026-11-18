@@ -31,6 +31,7 @@ kbots project configure --overwrite      # regenerate current project's OpenCode
 kbots sessions start --directory /path/to/project
 kbots project list
 kbots project show PROJECT-ID
+kbots project watch --project PRJ-1   # prompt the git bot on file changes
 kbots approve DEPLOY-23
 kbots tui
 kbots gui
@@ -47,7 +48,15 @@ kbots agents show AGT-1
 kbots agents prompt AGT-1 "Review PR #42"
 kbots agents interrupt AGT-1                    # esc, session kept
 kbots agents stop AGT-1                         # terminal killed, session kept
+kbots project watch                              # list watchers (none by default)
+kbots project watch --project PRJ-1              # enable the file-change watcher
+kbots project watch --project PRJ-1 --off        # disable
 ```
+
+With the watcher enabled, the daemon polls `git status` and, once the tree is
+quiet and the git agent is idle, prompts it with the changed paths — the bot
+then reviews/acts per its project instructions. The daemon never commits or
+pushes on its own.
 
 Terminal mode spawns `opencode --session <id>` inside the role directory in a
 Herdr-managed terminal; headless mode talks to the registered OpenCode service

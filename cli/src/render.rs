@@ -23,6 +23,8 @@ pub fn render(method: &str, value: &Value) -> Option<String> {
         "agents.stop" => Some(render_agent_action(value, "stopped")),
         "agents.prompt" => Some(render_agent_action(value, "accepted")),
         "agents.interrupt" => Some(render_agent_interrupt(value)),
+        "watchers.list" => Some(render_watchers_list(value)),
+        "watchers.set" => Some(render_watcher_set(value)),
         "internal.sessions.start" => Some(render_sessions_start(value)),
         "internal.project.configure" => Some(render_project_configure(value)),
         _ => None,
@@ -530,6 +532,67 @@ fn render_agents(value: &Value) -> String {
         }
     }
     lines.join("\n")
+}
+
+fn render_watchers_list(value: &Value) -> String {
+    let items = list_items(value);
+    if items.is_empty() {
+        return "No watchers configured. See `kbots project watch --project <ref>` to enable one.".to_owned();
+    }
+    let rows: Vec<Vec<String>> = items
+        .iter()
+        .map(|watcher| {
+            vec![
+                watcher
+                    .get("projectName")
+                    .or_else(|| watcher.get("projectId"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| "?".to_owned()),
+                if watcher.get("enabled").and_then(Value::as_bool).unwrap_or(false) {
+                    "on".to_owned()
+                } else {
+                    "off".to_owned()
+                },
+                watcher
+                    .get("intervalSeconds")
+                    .and_then(Value::as_u64)
+                    .map(|value| format!("{value}s"))
+                    .unwrap_or_else(|| "-".to_owned()),
+                watcher
+                    .get("debounceSeconds")
+                    .and_then(Value::as_u64)
+                    .map(|value| format!("{value}s"))
+                    .unwrap_or_else(|| "-".to_owned()),
+                watcher
+                    .get("cooldownSeconds")
+                    .and_then(Value::as_u64)
+                    .map(|value| format!("{value}s"))
+                    .unwrap_or_else(|| "-".to_owned()),
+                nullable(watcher, "lastChangeAt"),
+                nullable(watcher, "lastDeliveredAt"),
+            ]
+        })
+        .collect();
+    table(&["PROJECT", "STATE", "INTERVAL", "DEBOUNCE", "COOLDOWN", "LAST CHANGE", "LAST DELIVERED"], &rows)
+}
+
+fn render_watcher_set(value: &Value) -> String {
+    let project = value
+        .get("projectName")
+        .or_else(|| value.get("projectId"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .unwrap_or_else(|| "?".to_owned());
+    let enabled = value.get("enabled").and_then(Value::as_bool).unwrap_or(false);
+    let interval = value.get("intervalSeconds").and_then(Value::as_u64).unwrap_or(0);
+    let debounce = value.get("debounceSeconds").and_then(Value::as_u64).unwrap_or(0);
+    let cooldown = value.get("cooldownSeconds").and_then(Value::as_u64).unwrap_or(0);
+    if enabled {
+        format!("watcher enabled for {project} (interval {interval}s, debounce {debounce}s, cooldown {cooldown}s)")
+    } else {
+        format!("watcher disabled for {project}")
+    }
 }
 
 fn render_sessions_start(value: &Value) -> String {

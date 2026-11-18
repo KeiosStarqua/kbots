@@ -559,3 +559,145 @@ export function listLiveAgents(db: Database = getDb()): AgentRow[] {
 export function isLiveAgentStatus(status: AgentStatus): boolean {
   return (LIVE_AGENT_STATUSES as readonly string[]).includes(status)
 }
+
+export interface WatcherRow {
+  projectId: string
+  enabled: boolean
+  intervalSeconds: number
+  debounceSeconds: number
+  cooldownSeconds: number
+  maxPaths: number
+  observedFingerprint: string | null
+  reportedFingerprint: string | null
+  lastChangeAt: string | null
+  lastDeliveredAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+interface WatcherRecord {
+  project_id: string
+  enabled: number
+  interval_seconds: number
+  debounce_seconds: number
+  cooldown_seconds: number
+  max_paths: number
+  observed_fingerprint: string | null
+  reported_fingerprint: string | null
+  last_change_at: string | null
+  last_delivered_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+function toWatcherRow(record: WatcherRecord): WatcherRow {
+  return {
+    projectId: record.project_id,
+    enabled: record.enabled !== 0,
+    intervalSeconds: record.interval_seconds,
+    debounceSeconds: record.debounce_seconds,
+    cooldownSeconds: record.cooldown_seconds,
+    maxPaths: record.max_paths,
+    observedFingerprint: record.observed_fingerprint,
+    reportedFingerprint: record.reported_fingerprint,
+    lastChangeAt: record.last_change_at,
+    lastDeliveredAt: record.last_delivered_at,
+    createdAt: record.created_at,
+    updatedAt: record.updated_at,
+  }
+}
+
+export function upsertWatcher(
+  input: {
+    projectId: string
+    enabled: boolean
+    intervalSeconds?: number
+    debounceSeconds?: number
+    cooldownSeconds?: number
+    maxPaths?: number
+  },
+  db: Database = getDb(),
+): WatcherRow {
+  const run = db.transaction((): WatcherRow => {
+    const timestamp = now()
+    const existing = getWatcher(input.projectId, db)
+    if (existing) {
+      db.query(
+        `UPDATE watchers SET enabled = ?,
+           interval_seconds = COALESCE(?, interval_seconds),
+           debounce_seconds = COALESCE(?, debounce_seconds),
+           cooldown_seconds = COALESCE(?, cooldown_seconds),
+           max_paths = COALESCE(?, max_paths),
+           updated_at = ?
+         WHERE project_id = ?`,
+      ).run(
+        input.enabled ? 1 : 0,
+        input.intervalSeconds ?? null,
+        input.debounceSeconds ?? null,
+        input.cooldownSeconds ?? null,
+        input.maxPaths ?? null,
+        timestamp,
+        input.projectId,
+      )
+      return getWatcher(input.projectId, db)!
+    }
+    db.query(
+      `INSERT INTO watchers(project_id, enabled, interval_seconds, debounce_seconds, cooldown_seconds, max_paths, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      input.projectId,
+      input.enabled ? 1 : 0,
+      input.intervalSeconds ?? 10,
+      input.debounceSeconds ?? 10,
+      input.cooldownSeconds ?? 60,
+      input.maxPaths ?? 10,
+      timestamp,
+      timestamp,
+    )
+    return getWatcher(input.projectId, db)!
+  })
+  return run()
+}
+
+export function getWatcher(projectId: string, db: Database = getDb()): WatcherRow | null {
+  const row = db.query("SELECT * FROM watchers WHERE project_id = ?").get(projectId) as WatcherRecord | null
+  return row ? toWatcherRow(row) : null
+}
+
+export function listWatchers(db: Database = getDb()): WatcherRow[] {
+  const rows = db
+    .query("SELECT w.*, p.name AS project_name FROM watchers w JOIN projects p ON p.id = w.project_id ORDER BY p.created_at ASC")
+    .all() as (WatcherRecord & { project_name: string })[]
+  return rows.map((row) => ({ ...toWatcherRow(row), projectName: row.project_name } as WatcherRow & { projectName: string }))
+}
+
+export function listEnabledWatchers(db: Database = getDb()): WatcherRow[] {
+  const rows = db.query("SELECT * FROM watchers WHERE enabled = 1").all() as WatcherRecord[]
+  return rows.map(toWatcherRow)
+}
+
+export function updateWatcherState(
+  projectId: string,
+  patch: Partial<{
+    enabled: boolean
+    observedFingerprint: string | null
+    reportedFingerprint: string | null
+    lastChangeAt: string | null
+    lastDeliveredAt: string | null
+  }>,
+  db: Database = getDb(),
+): WatcherRow | null {
+  const sets: string[] = []
+  const values: (string | number | null)[] = []
+  if ("enabled" in patch && patch.enabled !== undefined) { sets.push("enabled = ?"); values.push(patch.enabled ? 1 : 0) }
+  if ("observedFingerprint" in patch) { sets.push("observed_fingerprint = ?"); values.push(patch.observedFingerprint ?? null) }
+  if ("reportedFingerprint" in patch) { sets.push("reported_fingerprint = ?"); values.push(patch.reportedFingerprint ?? null) }
+  if ("lastChangeAt" in patch) { sets.push("last_change_at = ?"); values.push(patch.lastChangeAt ?? null) }
+  if ("lastDeliveredAt" in patch) { sets.push("last_delivered_at = ?"); values.push(patch.lastDeliveredAt ?? null) }
+  if (sets.length === 0) return getWatcher(projectId, db)
+  sets.push("updated_at = ?")
+  values.push(now())
+  values.push(projectId)
+  db.query(`UPDATE watchers SET ${sets.join(", ")} WHERE project_id = ?`).run(...values)
+  return getWatcher(projectId, db)
+}

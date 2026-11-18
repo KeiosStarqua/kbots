@@ -56,7 +56,7 @@ and work without that daemon.
 | --- | --- | --- |
 | `src/backend/cli/` | Transitional Bun command entry points for OpenCode control and bot session startup | Implemented |
 | `src/backend/opencode/` | Shared OpenCode service/session adapter | Planned module boundary; behavior currently lives in CLI scripts |
-| `src/backend/orchestrator/` | v1 task/project/approval/system services; scheduling, workflow state transitions, event ingestion, restart reconciliation | v1 services implemented; workflow engine and scheduling still planned |
+| `src/backend/orchestrator/` | v1 task/project/approval/system services; file-change watcher (`orchestrator/watchers.ts`) prompts the managed git agent on working-tree deltas with debounce + cooldown; scheduling, workflow state transitions, event ingestion, restart reconciliation | v1 services + git watcher implemented; workflow engine and scheduling still planned |
 | `src/backend/workflows/` | Task stages, dependencies, acceptance criteria, retry and approval rules | Planned |
 | `src/backend/bots/` | agents.list implemented (incl. managed `agents.start/show/stop/prompt/interrupt` lifecycle: exact session binding, terminal+headless modes, SQLite registry, boot reconciliation); CEO planning/review, GIT and OPS work contracts, coding worker policies | Lifecycle implemented; work contracts still planned |
 | `src/backend/adapters/` | Herdr adapter (read-only `hc ls`) implemented; Git and optional agmsg integrations | Herdr implemented; Git/agmsg planned |

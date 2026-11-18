@@ -33,6 +33,11 @@ import {
   agentsShowHandler,
   reconcileAgents,
 } from "./bots/agents.ts"
+import {
+  startWatcherLoop,
+  watchersListHandler,
+  watchersSetHandler,
+} from "./orchestrator/watchers.ts"
 
 const MAX_REQUEST_BYTES = 1024 * 1024
 const SOCKET_TIMEOUT_MS = 10_000
@@ -76,6 +81,8 @@ function buildHandlers(socket: string): Record<string, Handler> {
     "agents.stop": agentsStopHandler,
     "agents.prompt": agentsPromptHandler,
     "agents.interrupt": agentsInterruptHandler,
+    "watchers.list": watchersListHandler,
+    "watchers.set": watchersSetHandler,
     "approvals.list": listApprovalsHandler,
     "approvals.approve": approveApprovalHandler,
     "events.list": listEventsHandler,
@@ -160,6 +167,7 @@ async function main(): Promise<void> {
   })
 
   const shutdown = () => {
+    stopWatcher()
     server.close(() => {
       void unlink(path).finally(() => process.exit(0))
     })
@@ -174,6 +182,7 @@ async function main(): Promise<void> {
   })
   await chmod(path, 0o600)
   console.error(`${DAEMON_NAME}: listening on ${path}`)
+  const stopWatcher = startWatcherLoop()
   void reconcileAgents()
     .then(({ checked, changed }) => {
       if (checked > 0) console.error(`${DAEMON_NAME}: reconciled ${checked} live agent(s), ${changed} changed`)

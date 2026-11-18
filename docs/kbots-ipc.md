@@ -43,6 +43,8 @@ Initial CLI methods:
 | `tasks show ID` | `tasks.get` | `taskId` |
 | `tasks cancel ID` | `tasks.cancel` | `taskId` |
 | `agents list [--project REF]` | `agents.list` | `{}` or `{project}` — scopes items/managed/liveTerminals to one project (`filteredBy` set; `registeredProjects` remains the global count) |
+| `project watch [--project REF] [--off] [--interval N] [--debounce N] [--cooldown N] [--max-paths N]` | `watchers.set` | Enable/configure the daemon file-change watcher |
+| `project watch` (no `--project`) | `watchers.list` | `{}` — list configured watchers |
 | `agents start ROLE [--mode terminal\|headless] [--project REF] [--fresh]` | `agents.start` | `role`, optional `mode` (default `terminal`), optional `project`, optional `fresh` |
 | `agents show ID` | `agents.show` | `botId` |
 | `agents stop ID` | `agents.stop` | `botId` |
@@ -71,6 +73,8 @@ Result shapes for the read and create methods:
 | `agents.stop` | `{id, projectId, role, mode, status, sessionId, stoppedAt, …}` — terminal is killed; the OpenCode session and history are kept |
 | `agents.prompt` | `{botId, mode, accepted, turn?}` — refuses unless the agent is idle (never `force`s past a blocked program) |
 | `agents.interrupt` | `{botId, mode, key?, outcome?}` — `terminal` mode: stop key (esc); `headless` mode: OpenCode session interrupt |
+| `watchers.set` | One watcher row: `{projectId, projectName?, projectPath?, enabled, intervalSeconds, debounceSeconds, cooldownSeconds, maxPaths, lastChangeAt, lastDeliveredAt}` — opt-in; `off` disables |
+| `watchers.list` | `{items: [watcher…]}` — all configured watchers |
 
 The desktop GUI also requests `approvals.list` and `events.list` (with an
 optional `limit`) to populate the approvals and activity views. These read
@@ -103,6 +107,23 @@ Session creation does not prompt the agents. This local action talks directly
 to the OpenCode service and remains usable without the workflow daemon.
 Its sibling, `kbots agents start`, is the managed path: the daemon owns the
 session, the terminal, and the registry entry.
+
+## File-change watcher
+
+`kbots project watch --project REF [--off] [--interval N] [--debounce N]
+[--cooldown N] [--max-paths N]` enables a per-project watcher in the daemon
+(SQLite `watchers` table; disabled by default). The daemon polls
+`git status --porcelain=v1` every `intervalSeconds`; once the tree has been
+quiet for `debounceSeconds` and the managed git agent for the project is
+idle, it prompts that agent with the delta (paths, capped at `maxPaths`) and
+a fixed instruction referencing the project's git-bot policy. If the agent is
+busy/blocked the delta is re-computed next tick and retried — the prompt is
+never forced and never dropped silently. After every delivery a `cooldownSeconds`
+quiet period suppresses further prompts so the agent's own edits don't
+re-trigger it (no prompt ping-pong). Each delivery (or deferral) is logged as
+a `watch.changed`/`watch.deferred` event. Only projects you explicitly enable
+are watched. The watcher disables itself with a `watch.disabled` event when
+the project is not a git repository or `git` fails.
 
 ## Managed agents (phase 1)
 

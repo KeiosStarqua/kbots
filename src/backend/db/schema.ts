@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 // v1 → v2 delta: the managed agent registry. Applied to databases already at
 // user_version 1; fresh databases run SCHEMA_DDL which embeds everything.
@@ -24,6 +24,24 @@ CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_active_project_role
   ON agents(project_id, role)
   WHERE status IN ('starting','running','stopping');
+`
+
+// v2 → v3 delta: per-project file-change watchers (git working tree).
+export const WATCHERS_DDL = `
+CREATE TABLE IF NOT EXISTS watchers(
+  project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  interval_seconds INTEGER NOT NULL DEFAULT 10,
+  debounce_seconds INTEGER NOT NULL DEFAULT 10,
+  cooldown_seconds INTEGER NOT NULL DEFAULT 60,
+  max_paths INTEGER NOT NULL DEFAULT 10,
+  observed_fingerprint TEXT,
+  reported_fingerprint TEXT,
+  last_change_at TEXT,
+  last_delivered_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 `
 
 export const SCHEMA_DDL = `
@@ -95,4 +113,19 @@ CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_active_project_role
   ON agents(project_id, role)
   WHERE status IN ('starting','running','stopping');
+
+CREATE TABLE IF NOT EXISTS watchers(
+  project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  interval_seconds INTEGER NOT NULL DEFAULT 10,
+  debounce_seconds INTEGER NOT NULL DEFAULT 10,
+  cooldown_seconds INTEGER NOT NULL DEFAULT 60,
+  max_paths INTEGER NOT NULL DEFAULT 10,
+  observed_fingerprint TEXT,
+  reported_fingerprint TEXT,
+  last_change_at TEXT,
+  last_delivered_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 `

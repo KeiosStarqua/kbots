@@ -161,6 +161,27 @@ enum ProjectCommands {
     List,
     /// Show a registered project by ID.
     Show { project_id: String },
+    /// Manage the file-change watcher for a project (defaults to listing).
+    Watch {
+        /// Project id, name, or path (omit to list watchers).
+        #[arg(long)]
+        project: Option<String>,
+        /// Disable the watcher instead of enabling it.
+        #[arg(long)]
+        off: bool,
+        /// Poll interval in seconds.
+        #[arg(long)]
+        interval: Option<u64>,
+        /// Quiet period before prompting, in seconds.
+        #[arg(long)]
+        debounce: Option<u64>,
+        /// Suppress delivery for this many seconds after a prompt.
+        #[arg(long)]
+        cooldown: Option<u64>,
+        /// Cap how many paths are included in the prompt delta.
+        #[arg(long)]
+        max_paths: Option<u64>,
+    },
     /// Create or regenerate per-bot OpenCode configs from .agents/bot/kbots.json.
     Configure {
         /// Existing project directory (defaults to the current directory).
@@ -261,6 +282,27 @@ fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> 
             ProjectCommands::Show { project_id } => {
                 ("projects.get", json!({ "projectId": project_id }))
             }
+            ProjectCommands::Watch {
+                project,
+                off,
+                interval,
+                debounce,
+                cooldown,
+                max_paths,
+            } => match project {
+                Some(project) => (
+                    "watchers.set",
+                    json!({
+                        "project": project,
+                        "enabled": !off,
+                        "intervalSeconds": interval,
+                        "debounceSeconds": debounce,
+                        "cooldownSeconds": cooldown,
+                        "maxPaths": max_paths,
+                    }),
+                ),
+                None => ("watchers.list", json!({})),
+            },
             ProjectCommands::Configure { .. } => unreachable!("handled before RPC"),
         },
         Commands::Approve { approval_id } => {

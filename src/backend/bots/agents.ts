@@ -139,7 +139,7 @@ function managedPayload(
 }
 
 /** Probe the runtime backing an agent; never throws. */
-async function probeAgent(agent: AgentRow): Promise<Record<string, unknown> | null> {
+export async function probeAgent(agent: AgentRow): Promise<Record<string, unknown> | null> {
   try {
     if (agent.mode === "terminal") {
       if (!agent.hcAddress) return { state: "missing" }
@@ -338,14 +338,14 @@ export async function agentsInterruptHandler(params: Record<string, unknown>): P
   return { botId: agent.id, mode: agent.mode, outcome: "stopped" }
 }
 
-export async function agentsPromptHandler(params: Record<string, unknown>): Promise<Record<string, unknown>> {
-  await reconcileAgents()
-  const agent = mustGetAgent(params)
+/**
+ * Shared prompt path for handlers and the watcher: status and busy guards,
+ * then send. Never forces past a blocked program.
+ */
+export async function promptAgentCore(agent: AgentRow, text: string): Promise<Record<string, unknown>> {
   if (agent.status !== "running") {
     throw invalidParams(`agent ${agent.id} is ${agent.status}; prompts need a running agent`)
   }
-  const text = textParam(params.text)
-
   if (agent.mode === "terminal") {
     if (!agent.hcAddress) throw invalidParams(`agent ${agent.id} has no terminal yet`)
     const terminal = await getTerminal(agent.hcAddress)
@@ -395,6 +395,13 @@ export async function agentsPromptHandler(params: Record<string, unknown>): Prom
   }
   addEvent("bot.prompted", `Agent ${agent.id} prompted (${text.length} chars)`, { agentId: agent.id, textLength: text.length })
   return { botId: agent.id, mode: agent.mode, accepted: true }
+}
+
+export async function agentsPromptHandler(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+  await reconcileAgents()
+  const agent = mustGetAgent(params)
+  const text = textParam(params.text)
+  return promptAgentCore(agent, text)
 }
 
 export async function agentsShowHandler(params: Record<string, unknown>): Promise<Record<string, unknown>> {
