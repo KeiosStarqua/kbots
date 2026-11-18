@@ -51,8 +51,8 @@ Start the terminal dashboard in Herdr, tmux, SSH, or Mosh with:
 cargo run --manifest-path tui/control-center/Cargo.toml
 ```
 
-The TUI demo uses arrow keys or `j`/`k` to navigate, `1`–`6` to jump to a
-section, and `q` or `Esc` to exit. The CLI can launch either UI and defines
+The TUI demo adapts to narrow terminal widths and uses arrow keys or `h`/`j`/`k`/`l`
+to navigate, `1`–`6` to jump to a section, and `q` or `Esc` to exit. The CLI can launch either UI and defines
 automation commands for status, tasks, agents, and approvals. Until the daemon
 is implemented, those API commands return a clear socket connection error.
 

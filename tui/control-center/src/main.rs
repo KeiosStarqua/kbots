@@ -36,6 +36,12 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') => {
                 self.selected = self.selected.checked_sub(1).unwrap_or(NAVIGATION.len() - 1);
             }
+            KeyCode::Right | KeyCode::Char('l') => {
+                self.selected = (self.selected + 1) % NAVIGATION.len();
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.selected = self.selected.checked_sub(1).unwrap_or(NAVIGATION.len() - 1);
+            }
             KeyCode::Char('1'..='6') => {
                 if let KeyCode::Char(number) = key {
                     self.selected = (number as usize) - ('1' as usize);
@@ -78,23 +84,45 @@ fn render(frame: &mut Frame, app: &App) {
 }
 
 fn render_header(frame: &mut Frame, area: Rect) {
-    let header = Paragraph::new(Line::from(vec![
-        Span::styled(
-            " kbots ",
-            Style::default().fg(Color::Black).bg(Color::Green).bold(),
-        ),
-        Span::styled(
-            "  CONTROL CENTER  ",
-            Style::default().fg(Color::White).bold(),
-        ),
-        Span::raw("  │  "),
-        Span::styled(
-            "DEMO DATA · daemon not connected",
-            Style::default().fg(Color::Yellow),
-        ),
-        Span::raw("  │  LOCAL WORKSPACE "),
-    ]))
-    .block(
+    let line = if area.width < 70 {
+        Line::from(vec![
+            Span::styled(
+                " kbots ",
+                Style::default().fg(Color::Black).bg(Color::Green).bold(),
+            ),
+            Span::styled(" · DEMO", Style::default().fg(Color::Yellow)),
+        ])
+    } else if area.width < 112 {
+        Line::from(vec![
+            Span::styled(
+                " kbots ",
+                Style::default().fg(Color::Black).bg(Color::Green).bold(),
+            ),
+            Span::styled(
+                " · Control Center · ",
+                Style::default().fg(Color::White).bold(),
+            ),
+            Span::styled("DEMO", Style::default().fg(Color::Yellow)),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled(
+                " kbots ",
+                Style::default().fg(Color::Black).bg(Color::Green).bold(),
+            ),
+            Span::styled(
+                "  CONTROL CENTER  ",
+                Style::default().fg(Color::White).bold(),
+            ),
+            Span::raw("  │  "),
+            Span::styled(
+                "DEMO DATA · daemon not connected",
+                Style::default().fg(Color::Yellow),
+            ),
+            Span::raw("  │  LOCAL WORKSPACE "),
+        ])
+    };
+    let header = Paragraph::new(line).block(
         Block::default()
             .borders(Borders::BOTTOM)
             .border_style(Style::default().fg(Color::DarkGray)),
@@ -103,6 +131,11 @@ fn render_header(frame: &mut Frame, area: Rect) {
 }
 
 fn render_body(frame: &mut Frame, area: Rect, app: &App) {
+    if area.width < 112 {
+        render_compact_body(frame, area, app);
+        return;
+    }
+
     let columns = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(22), Constraint::Min(0)])
@@ -143,6 +176,122 @@ fn render_body(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         render_placeholder(frame, columns[1], NAVIGATION[app.selected]);
     }
+}
+
+fn render_compact_body(frame: &mut Frame, area: Rect, app: &App) {
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(area);
+    let nav = Paragraph::new(Line::from(vec![
+        Span::styled("‹ ", Style::default().fg(Color::LightGreen).bold()),
+        Span::styled(
+            format!(
+                "{}/{}  {}",
+                app.selected + 1,
+                NAVIGATION.len(),
+                NAVIGATION[app.selected]
+            ),
+            Style::default().fg(Color::White).bold(),
+        ),
+        Span::styled("  ›", Style::default().fg(Color::LightGreen).bold()),
+    ]));
+    frame.render_widget(nav, sections[0]);
+
+    if app.selected == 0 {
+        render_compact_overview(frame, sections[1]);
+    } else {
+        render_placeholder(frame, sections[1], NAVIGATION[app.selected]);
+    }
+}
+
+fn render_compact_overview(frame: &mut Frame, area: Rect) {
+    if area.height < 9 {
+        let summary = Paragraph::new(vec![
+            Line::from(Span::styled(
+                "Projects 3 · Tasks 12 · Agents 4 · Approvals 2",
+                Style::default().fg(Color::LightGreen).bold(),
+            )),
+            Line::from(Span::styled(
+                "Enlarge terminal for activity details",
+                Style::default().fg(Color::Gray),
+            )),
+        ]);
+        frame.render_widget(summary, area);
+        return;
+    }
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(6),
+            Constraint::Length(5),
+            Constraint::Min(4),
+        ])
+        .split(area);
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("P ", Style::default().fg(Color::Cyan)),
+            Span::styled("03   ", Style::default().fg(Color::White).bold()),
+            Span::styled("T ", Style::default().fg(Color::LightGreen)),
+            Span::styled("12   ", Style::default().fg(Color::White).bold()),
+            Span::styled("A ", Style::default().fg(Color::Magenta)),
+            Span::styled("04   ", Style::default().fg(Color::White).bold()),
+            Span::styled("! ", Style::default().fg(Color::Yellow)),
+            Span::styled("02", Style::default().fg(Color::White).bold()),
+        ])),
+        rows[0],
+    );
+
+    let agents = Paragraph::new(vec![
+        Line::from(Span::styled(
+            "AGENTS · DEMO",
+            Style::default().fg(Color::Gray).bold(),
+        )),
+        Line::from(vec![
+            Span::styled("CEO  ", Style::default().fg(Color::Magenta)),
+            Span::raw("Planning · api-service"),
+        ]),
+        Line::from(vec![
+            Span::styled("W01  ", Style::default().fg(Color::Cyan)),
+            Span::raw("OAuth callback"),
+        ]),
+        Line::from(vec![
+            Span::styled("GIT  ", Style::default().fg(Color::Yellow)),
+            Span::raw("Awaiting integration"),
+        ]),
+        Line::from(vec![
+            Span::styled("OPS  ", Style::default().fg(Color::LightGreen)),
+            Span::raw("Running tests"),
+        ]),
+    ])
+    .block(Block::default().borders(Borders::TOP));
+    frame.render_widget(agents, rows[1]);
+
+    let queue = Paragraph::new(vec![
+        Line::from(Span::styled(
+            "QUEUE",
+            Style::default().fg(Color::Gray).bold(),
+        )),
+        Line::from("01 · Authentication [CODE]"),
+        Line::from("02 · Billing dashboard [REVIEW]"),
+        Line::from("03 · Webhook retries [QUEUED]"),
+    ])
+    .block(Block::default().borders(Borders::TOP));
+    frame.render_widget(queue, rows[2]);
+
+    let events = Paragraph::new(vec![
+        Line::from(Span::styled(
+            "RECENT EVENTS",
+            Style::default().fg(Color::Gray).bold(),
+        )),
+        Line::from("10:42 worker.done · TASK-104"),
+        Line::from("10:39 review.pending · TASK-102"),
+    ])
+    .block(Block::default().borders(Borders::TOP));
+    frame.render_widget(events, rows[3]);
 }
 
 fn render_overview(frame: &mut Frame, area: Rect) {
@@ -297,16 +446,35 @@ fn render_placeholder(frame: &mut Frame, area: Rect, section: &str) {
 }
 
 fn render_footer(frame: &mut Frame, area: Rect) {
-    let footer = Paragraph::new(Line::from(vec![
-        Span::styled(
-            " ↑/↓ or j/k ",
-            Style::default().fg(Color::LightGreen).bold(),
-        ),
-        Span::raw("navigate   "),
-        Span::styled("1–6 ", Style::default().fg(Color::LightGreen).bold()),
-        Span::raw("jump to section   "),
-        Span::styled("q / Esc ", Style::default().fg(Color::LightGreen).bold()),
-        Span::raw("quit and restore terminal"),
-    ]));
+    let line = if area.width < 70 {
+        Line::from(vec![
+            Span::styled("←/→ ", Style::default().fg(Color::LightGreen).bold()),
+            Span::raw("sections  "),
+            Span::styled("q ", Style::default().fg(Color::LightGreen).bold()),
+            Span::raw("quit"),
+        ])
+    } else if area.width < 112 {
+        Line::from(vec![
+            Span::styled("←/→ or j/k ", Style::default().fg(Color::LightGreen).bold()),
+            Span::raw("sections   "),
+            Span::styled("1–6 ", Style::default().fg(Color::LightGreen).bold()),
+            Span::raw("jump   "),
+            Span::styled("q ", Style::default().fg(Color::LightGreen).bold()),
+            Span::raw("quit"),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled(
+                " ↑/↓ or j/k ",
+                Style::default().fg(Color::LightGreen).bold(),
+            ),
+            Span::raw("navigate   "),
+            Span::styled("1–6 ", Style::default().fg(Color::LightGreen).bold()),
+            Span::raw("jump to section   "),
+            Span::styled("q / Esc ", Style::default().fg(Color::LightGreen).bold()),
+            Span::raw("quit and restore terminal"),
+        ])
+    };
+    let footer = Paragraph::new(line);
     frame.render_widget(footer, area);
 }
