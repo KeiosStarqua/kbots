@@ -39,7 +39,12 @@ import {
   type TaskStatus,
 } from "../db/repositories.ts"
 import { deliverQueuedMessages } from "./delivery.ts"
+import {
+  killTerminal,
+  listTerminalsByLabels,
+} from "../adapters/herdr.ts"
 import { makeOpencodeClient } from "../bots/opencode.ts"
+import { spawnTerminal } from "../bots/agents.ts"
 
 export interface DispatchResult {
   taskId: string
@@ -144,10 +149,10 @@ export async function dispatchTask(taskId: string): Promise<DispatchResult> {
 
     // Registry row first (mirrors agents.start), so the session metadata
     // carries kbotsBotId. Status starting → running once committed.
-    const agent = createAgent({
+    let agent = createAgent({
       projectId: project.projectId,
       role: "ceo",
-      mode: "headless",
+      mode: "terminal",
       directory,
       name: ceoName(taskId),
       status: "starting",
@@ -217,6 +222,39 @@ export async function dispatchTask(taskId: string): Promise<DispatchResult> {
       return { taskId, dispatched: false, status: "failed", ceoAgentId: agent.id, error: message }
     }
 
+    // Every agent runs through hc: spawn the terminal running this CEO
+    // session (same binding as a terminal-mode `agents start`).
+    try {
+      const spawned = await spawnTerminal(agent, project.path, project.name, sessionId, {
+        name: ceoName(taskId),
+        extraLabels: { kbotsTaskId: task.taskId },
+      })
+      agent = updateAgent(agent.id, {
+        hcAddress: spawned.address,
+        name: spawned.name ?? agent.name,
+        status: "running",
+        lastError: null,
+      })!
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      try {
+        const strays = await listTerminalsByLabels({ kbotsBotId: agent.id })
+        for (const stray of strays) {
+          if (stray.state === "live") await killTerminal(stray.address).catch(() => {})
+        }
+      } catch {
+        // best effort
+      }
+      updateAgent(agent.id, { status: "error", lastError: message })
+      transitionTaskStatus(taskId, "failed")
+      addEvent(
+        "task.dispatch_failed",
+        `Task ${taskId} dispatch failed after session creation: spawn terminal: ${message}`,
+        { taskId, projectId: project.projectId, agentId: agent.id, sessionId, phase: "spawn", message },
+      )
+      return { taskId, dispatched: false, status: "failed", ceoAgentId: agent.id, error: message }
+    }
+
     // Enqueue the first prompt and deliver immediately if the CEO is idle.
     const prompt = firstPrompt(task)
     queueTaskMessage({ taskId, direction: "system", text: prompt })
@@ -233,7 +271,7 @@ export async function dispatchTask(taskId: string): Promise<DispatchResult> {
     addEvent(
       "task.dispatched",
       `Task ${taskId} dispatched to CEO ${agent.id} (${project.name})`,
-      { taskId, agentId: agent.id, projectId: project.projectId, sessionId, mode: "headless" },
+      { taskId, agentId: agent.id, projectId: project.projectId, sessionId, mode: "terminal", hcAddress: agent.hcAddress },
     )
     return { taskId, dispatched: true, status: "researching", ceoAgentId: agent.id }
   } catch (error) {

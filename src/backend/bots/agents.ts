@@ -244,13 +244,14 @@ function opencodeBin(): string {
   return "opencode"
 }
 
-async function spawnTerminal(
+export async function spawnTerminal(
   agent: AgentRow,
   projectPath: string,
   projectName: string,
   sessionId: string,
+  opts?: { name?: string; extraLabels?: Record<string, string> },
 ): Promise<HerdrFullTerminal> {
-  const base = botName(projectName, agent.role)
+  const base = opts?.name ?? botName(projectName, agent.role)
   const roleDir = join(projectPath, ".agents", "bot", agent.role)
   for (const name of [base, `${base}-${randomSuffix()}`]) {
     try {
@@ -258,7 +259,12 @@ async function spawnTerminal(
         argv: [opencodeBin(), "--session", sessionId],
         cwd: roleDir,
         name,
-        labels: { kbotsBotId: agent.id, kbotsRole: agent.role, kbotsProjectId: agent.projectId },
+        labels: {
+          kbotsBotId: agent.id,
+          kbotsRole: agent.role,
+          kbotsProjectId: agent.projectId,
+          ...opts?.extraLabels,
+        },
       })
     } catch (error) {
       if (error instanceof HerdrError && /name_taken/i.test(error.message)) continue

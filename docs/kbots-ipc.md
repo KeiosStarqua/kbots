@@ -216,7 +216,10 @@ Semantics:
   directories.
 - Each dispatched task gets its own OpenCode session created in that
   directory, with metadata `{kbotsBotId, kbotsTaskId, kbotsRole: "ceo",
-  kbotsProjectId}`. Mode `headless` by default, `terminal` on demand.
+  kbotsProjectId}`. Mode `terminal` by default: dispatch spawns an `hc`
+  terminal running `opencode --session <id>` (same binding as a
+  terminal-mode `agents start`); the task CEO is always watchable and
+  steerable via `agents attach` semantics, never headless.
 - Per-project active-CEO cap, default 4; override with `KBOTS_CEO_CAP`.
   Over the cap the task stays `queued`, a `task.deferred` event is logged,
   and dispatch is retried by reconcile or the next action.
