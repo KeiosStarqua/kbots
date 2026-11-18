@@ -10,7 +10,32 @@ export interface ProjectRow {
   updatedAt: string
 }
 
-export type TaskStatus = "planning" | "in_progress" | "completed" | "canceled"
+export type TaskStatus =
+  | "queued"
+  | "researching"
+  | "planning"
+  | "delegating"
+  | "running"
+  | "review"
+  | "blocked"
+  | "done"
+  | "failed"
+  | "canceled"
+
+export const TASK_STATUSES: readonly TaskStatus[] = [
+  "queued",
+  "researching",
+  "planning",
+  "delegating",
+  "running",
+  "review",
+  "blocked",
+  "done",
+  "failed",
+  "canceled",
+]
+
+export const TERMINAL_TASK_STATUSES: readonly TaskStatus[] = ["done", "failed", "canceled"]
 
 export interface TaskRow {
   taskId: string
@@ -21,6 +46,8 @@ export interface TaskRow {
   createdAt: string
   updatedAt: string
   canceledAt: string | null
+  goal: string | null
+  detail: string | null
 }
 
 export type ApprovalStatus = "pending" | "approved"
@@ -46,7 +73,7 @@ export interface EventRow {
 
 let singleton: Database | null = null
 
-function getDb(): Database {
+export function getDb(): Database {
   if (!singleton) singleton = openDatabase()
   return singleton
 }
@@ -88,6 +115,8 @@ interface TaskRecord {
   created_at: string
   updated_at: string
   canceled_at: string | null
+  goal: string | null
+  detail: string | null
 }
 
 interface ApprovalRecord {
@@ -120,10 +149,8 @@ function toProjectRow(record: ProjectRecord): ProjectRow {
   }
 }
 
-const TASK_STATUSES: readonly TaskStatus[] = ["planning", "in_progress", "completed", "canceled"]
-
 function toTaskStatus(value: string): TaskStatus {
-  return (TASK_STATUSES as readonly string[]).includes(value) ? (value as TaskStatus) : "planning"
+  return (TASK_STATUSES as readonly string[]).includes(value) ? (value as TaskStatus) : "queued"
 }
 
 function toTaskRow(record: TaskRecord): TaskRow {
@@ -136,6 +163,8 @@ function toTaskRow(record: TaskRecord): TaskRow {
     createdAt: record.created_at,
     updatedAt: record.updated_at,
     canceledAt: record.canceled_at,
+    goal: record.goal ?? null,
+    detail: record.detail ?? null,
   }
 }
 
@@ -244,15 +273,15 @@ const TASK_SELECT = `
 `
 
 export function createTask(
-  input: { title: string; projectId?: string | null },
+  input: { title: string; projectId?: string | null; goal?: string | null; detail?: string | null },
   db: Database = getDb(),
 ): TaskRow {
   const run = db.transaction((): TaskRow => {
     const timestamp = now()
     const id = nextId("TASK", db)
     db.query(
-      "INSERT INTO tasks(id, title, status, project_id, created_at, updated_at, canceled_at) VALUES (?, ?, 'planning', ?, ?, ?, NULL)",
-    ).run(id, input.title, input.projectId ?? null, timestamp, timestamp)
+      "INSERT INTO tasks(id, title, status, project_id, created_at, updated_at, canceled_at, goal, detail) VALUES (?, ?, 'queued', ?, ?, ?, NULL, ?, ?)",
+    ).run(id, input.title, input.projectId ?? null, timestamp, timestamp, input.goal ?? null, input.detail ?? null)
     const row = db.query(`${TASK_SELECT} WHERE tasks.id = ?`).get(id) as TaskRecord
     return toTaskRow(row)
   })
@@ -265,19 +294,393 @@ export function getTask(taskId: string, db: Database = getDb()): TaskRow | null 
 }
 
 export function listTasks(
-  filter?: { projectId?: string },
+  filter?: { projectId?: string; status?: TaskStatus },
   db: Database = getDb(),
 ): TaskRow[] {
+  const clauses: string[] = []
+  const values: string[] = []
   if (filter?.projectId !== undefined) {
-    const rows = db
-      .query(`${TASK_SELECT} WHERE tasks.project_id = ? ORDER BY tasks.created_at DESC, tasks.id DESC`)
-      .all(filter.projectId) as TaskRecord[]
-    return rows.map(toTaskRow)
+    clauses.push("tasks.project_id = ?")
+    values.push(filter.projectId)
   }
+  if (filter?.status !== undefined) {
+    clauses.push("tasks.status = ?")
+    values.push(filter.status)
+  }
+  const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : ""
   const rows = db
-    .query(`${TASK_SELECT} ORDER BY tasks.created_at DESC, tasks.id DESC`)
+    .query(`${TASK_SELECT}${where} ORDER BY tasks.created_at DESC, tasks.id DESC`)
+    .all(...values) as TaskRecord[]
+  return rows.map(toTaskRow)
+}
+
+export function listTasksByStatus(
+  statuses: readonly TaskStatus[],
+  db: Database = getDb(),
+): TaskRow[] {
+  if (statuses.length === 0) return []
+  const placeholders = statuses.map(() => "?").join(", ")
+  const rows = db
+    .query(`${TASK_SELECT} WHERE tasks.status IN (${placeholders}) ORDER BY tasks.created_at DESC, tasks.id DESC`)
+    .all(...statuses) as TaskRecord[]
+  return rows.map(toTaskRow)
+}
+
+// ---------------------------------------------------------------------------
+// tasks v4: links, messages, briefs, status transitions
+// ---------------------------------------------------------------------------
+
+export interface TaskAgentLinkRow {
+  taskId: string
+  agentId: string
+  role: "ceo" | "worker" | "git" | "ops"
+  createdAt: string
+}
+
+interface TaskAgentLinkRecord {
+  task_id: string
+  agent_id: string
+  role: string
+  created_at: string
+}
+
+function toTaskAgentLinkRow(record: TaskAgentLinkRecord): TaskAgentLinkRow {
+  const role = record.role === "ceo" || record.role === "worker" || record.role === "git" || record.role === "ops"
+    ? record.role
+    : "worker"
+  return { taskId: record.task_id, agentId: record.agent_id, role, createdAt: record.created_at }
+}
+
+export function insertTaskAgent(
+  input: { taskId: string; agentId: string; role: "ceo" | "worker" | "git" | "ops" },
+  db: Database = getDb(),
+): TaskAgentLinkRow {
+  const timestamp = now()
+  db.query(
+    "INSERT INTO task_agents(task_id, agent_id, role, created_at) VALUES (?, ?, ?, ?)",
+  ).run(input.taskId, input.agentId, input.role, timestamp)
+  const row = db
+    .query("SELECT * FROM task_agents WHERE task_id = ? AND agent_id = ?")
+    .get(input.taskId, input.agentId) as TaskAgentLinkRecord
+  return toTaskAgentLinkRow(row)
+}
+
+export function getTaskAgentLink(
+  taskId: string,
+  role?: "ceo" | "worker" | "git" | "ops",
+  db: Database = getDb(),
+): TaskAgentLinkRow | null {
+  const row = role === undefined
+    ? db.query("SELECT * FROM task_agents WHERE task_id = ? ORDER BY created_at ASC LIMIT 1").get(taskId) as TaskAgentLinkRecord | null
+    : db.query("SELECT * FROM task_agents WHERE task_id = ? AND role = ?").get(taskId, role) as TaskAgentLinkRecord | null
+  return row ? toTaskAgentLinkRow(row) : null
+}
+
+/** Reverse lookup for a linked task (used to tag agent events with taskId). */
+export function getTaskIdForAgent(
+  agentId: string,
+  role?: "ceo" | "worker" | "git" | "ops",
+  db: Database = getDb(),
+): string | null {
+  const row = role === undefined
+    ? db.query("SELECT task_id FROM task_agents WHERE agent_id = ? ORDER BY created_at ASC LIMIT 1").get(agentId) as { task_id: string } | null
+    : db.query("SELECT task_id FROM task_agents WHERE agent_id = ? AND role = ?").get(agentId, role) as { task_id: string } | null
+  return row?.task_id ?? null
+}
+
+export function listTaskAgents(taskId: string, db: Database = getDb()): AgentRow[] {
+  const rows = db
+    .query(
+      `SELECT agents.* FROM agents
+       JOIN task_agents ON task_agents.agent_id = agents.id
+       WHERE task_agents.task_id = ?
+       ORDER BY task_agents.created_at ASC, agents.id ASC`,
+    )
+    .all(taskId) as AgentRecord[]
+  return rows.map(toAgentRow)
+}
+
+export function getTaskCeoAgent(taskId: string, db: Database = getDb()): AgentRow | null {
+  const row = db
+    .query(
+      `SELECT agents.* FROM agents
+       JOIN task_agents ON task_agents.agent_id = agents.id
+       WHERE task_agents.task_id = ? AND task_agents.role = 'ceo'
+       ORDER BY task_agents.created_at DESC LIMIT 1`,
+    )
+    .get(taskId) as AgentRecord | null
+  return row ? toAgentRow(row) : null
+}
+
+export function countActiveCeoAgents(projectId: string, db: Database = getDb()): number {
+  const row = db
+    .query("SELECT COUNT(*) AS count FROM agents WHERE project_id = ? AND role = 'ceo' AND status IN ('starting','running','stopping')")
+    .get(projectId) as { count: number }
+  return row.count
+}
+
+export type TaskMessageDirection = "user" | "system"
+export type TaskMessageStatus = "queued" | "delivered" | "canceled"
+
+export interface TaskMessageRow {
+  id: string
+  taskId: string
+  ts: string
+  direction: TaskMessageDirection
+  text: string
+  status: TaskMessageStatus
+  deliveredAt: string | null
+}
+
+interface TaskMessageRecord {
+  id: string
+  task_id: string
+  ts: string
+  direction: string
+  text: string
+  status: string
+  delivered_at: string | null
+}
+
+function toTaskMessageRow(record: TaskMessageRecord): TaskMessageRow {
+  return {
+    id: record.id,
+    taskId: record.task_id,
+    ts: record.ts,
+    direction: record.direction === "system" ? "system" : "user",
+    text: record.text,
+    status: record.status === "delivered" || record.status === "canceled" ? record.status : "queued",
+    deliveredAt: record.delivered_at,
+  }
+}
+
+export function queueTaskMessage(
+  input: { taskId: string; direction: TaskMessageDirection; text: string },
+  db: Database = getDb(),
+): TaskMessageRow {
+  const id = nextId("MSG", db)
+  const timestamp = now()
+  db.query(
+    "INSERT INTO task_messages(id, task_id, ts, direction, text, status, delivered_at) VALUES (?, ?, ?, ?, ?, 'queued', NULL)",
+  ).run(id, input.taskId, timestamp, input.direction, input.text)
+  const row = db.query("SELECT * FROM task_messages WHERE id = ?").get(id) as TaskMessageRecord
+  return toTaskMessageRow(row)
+}
+
+export function listQueuedMessagesForTask(taskId: string, db: Database = getDb()): TaskMessageRow[] {
+  const rows = db
+    .query("SELECT * FROM task_messages WHERE task_id = ? AND status = 'queued' ORDER BY ts ASC, id ASC")
+    .all(taskId) as TaskMessageRecord[]
+  return rows.map(toTaskMessageRow)
+}
+
+export function listMessagesForTask(
+  taskId: string,
+  limit = 100,
+  db: Database = getDb(),
+): TaskMessageRow[] {
+  const rows = db
+    .query("SELECT * FROM task_messages WHERE task_id = ? ORDER BY ts ASC, id ASC LIMIT ?")
+    .all(taskId, limit) as TaskMessageRecord[]
+  return rows.map(toTaskMessageRow)
+}
+
+export function markMessageDelivered(
+  messageId: string,
+  db: Database = getDb(),
+): TaskMessageRow | null {
+  const timestamp = now()
+  db.query(
+    "UPDATE task_messages SET status = 'delivered', delivered_at = ? WHERE id = ? AND status = 'queued'",
+  ).run(timestamp, messageId)
+  const row = db.query("SELECT * FROM task_messages WHERE id = ?").get(messageId) as TaskMessageRecord | null
+  return row ? toTaskMessageRow(row) : null
+}
+
+export function countQueuedMessagesForTask(taskId: string, db: Database = getDb()): number {
+  const row = db
+    .query("SELECT COUNT(*) AS count FROM task_messages WHERE task_id = ? AND status = 'queued'")
+    .get(taskId) as { count: number }
+  return row.count
+}
+
+export function listTasksWithQueuedMessages(db: Database = getDb()): TaskRow[] {
+  const rows = db
+    .query(
+      `${TASK_SELECT}
+       WHERE tasks.id IN (SELECT DISTINCT task_id FROM task_messages WHERE status = 'queued')
+       ORDER BY tasks.created_at ASC, tasks.id ASC`,
+    )
     .all() as TaskRecord[]
   return rows.map(toTaskRow)
+}
+
+export function listQueuedUserMessagesForInbox(
+  db: Database = getDb(),
+): Array<{ message: TaskMessageRow; task: TaskRow }> {
+  const rows = db
+    .query(
+      `SELECT m.*, t.id AS t_id, t.title AS t_title, t.status AS t_status, t.project_id AS t_project_id,
+              t.created_at AS t_created_at, t.updated_at AS t_updated_at, t.canceled_at AS t_canceled_at,
+              t.goal AS t_goal, t.detail AS t_detail, projects.path AS t_project_path
+       FROM task_messages m
+       JOIN tasks t ON t.id = m.task_id
+       LEFT JOIN projects ON projects.id = t.project_id
+       WHERE m.status = 'queued' AND m.direction = 'user'
+       ORDER BY m.ts ASC, m.id ASC`,
+    )
+    .all() as Array<TaskMessageRecord & {
+      t_id: string
+      t_title: string
+      t_status: string
+      t_project_id: string | null
+      t_created_at: string
+      t_updated_at: string
+      t_canceled_at: string | null
+      t_goal: string | null
+      t_detail: string | null
+      t_project_path: string | null
+    }>
+  return rows.map((row) => ({
+    message: toTaskMessageRow(row),
+    task: toTaskRow({
+      id: row.t_id,
+      title: row.t_title,
+      status: row.t_status,
+      project_id: row.t_project_id,
+      project_path: row.t_project_path,
+      created_at: row.t_created_at,
+      updated_at: row.t_updated_at,
+      canceled_at: row.t_canceled_at,
+      goal: row.t_goal,
+      detail: row.t_detail,
+    }),
+  }))
+}
+
+export interface TaskWithLink {
+  task: TaskRow
+  ceo: AgentRow | null
+  pendingMessageCount: number
+}
+
+export function getTaskWithLink(taskId: string, db: Database = getDb()): TaskWithLink | null {
+  const task = getTask(taskId, db)
+  if (!task) return null
+  return {
+    task,
+    ceo: getTaskCeoAgent(taskId, db),
+    pendingMessageCount: countQueuedMessagesForTask(taskId, db),
+  }
+}
+
+export interface TaskBriefRow {
+  taskId: string
+  summary: string | null
+  decisions: string | null
+  blockers: string | null
+  nextStep: string | null
+  updatedAt: string
+}
+
+interface TaskBriefRecord {
+  task_id: string
+  summary: string | null
+  decisions: string | null
+  blockers: string | null
+  next_step: string | null
+  updated_at: string
+}
+
+function toTaskBriefRow(record: TaskBriefRecord): TaskBriefRow {
+  return {
+    taskId: record.task_id,
+    summary: record.summary,
+    decisions: record.decisions,
+    blockers: record.blockers,
+    nextStep: record.next_step,
+    updatedAt: record.updated_at,
+  }
+}
+
+export function getTaskBrief(taskId: string, db: Database = getDb()): TaskBriefRow | null {
+  const row = db.query("SELECT * FROM task_briefs WHERE task_id = ?").get(taskId) as TaskBriefRecord | null
+  return row ? toTaskBriefRow(row) : null
+}
+
+/** Selective merge: only the provided fields are written; updated_at always bumps. */
+export function upsertTaskBrief(
+  patch: {
+    taskId: string
+    summary?: string | null
+    decisions?: string | null
+    blockers?: string | null
+    nextStep?: string | null
+  },
+  db: Database = getDb(),
+): TaskBriefRow {
+  const timestamp = now()
+  const existing = getTaskBrief(patch.taskId, db)
+  const summary = patch.summary !== undefined ? patch.summary : (existing?.summary ?? null)
+  const decisions = patch.decisions !== undefined ? patch.decisions : (existing?.decisions ?? null)
+  const blockers = patch.blockers !== undefined ? patch.blockers : (existing?.blockers ?? null)
+  const nextStep = patch.nextStep !== undefined ? patch.nextStep : (existing?.nextStep ?? null)
+  db.query(
+    `INSERT INTO task_briefs(task_id, summary, decisions, blockers, next_step, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(task_id) DO UPDATE SET
+       summary = excluded.summary,
+       decisions = excluded.decisions,
+       blockers = excluded.blockers,
+       next_step = excluded.next_step,
+       updated_at = excluded.updated_at`,
+  ).run(patch.taskId, summary, decisions, blockers, nextStep, timestamp)
+  addEvent("brief.updated", `Brief for task ${patch.taskId} updated`, { taskId: patch.taskId }, db)
+  return getTaskBrief(patch.taskId, db)!
+}
+
+/** Append one line to the brief's decisions (newest last). */
+export function appendBriefDecision(
+  taskId: string,
+  note: string,
+  db: Database = getDb(),
+): TaskBriefRow {
+  const line = note.trim()
+  const existing = getTaskBrief(taskId, db)
+  if (line.length === 0) {
+    return existing ?? upsertTaskBrief({ taskId }, db)
+  }
+  const decisions = existing?.decisions
+    ? `${existing.decisions.replace(/\n+$/, "")}\n${line}`
+    : line
+  return upsertTaskBrief({ taskId, decisions }, db)
+}
+
+/**
+ * Move a task to a new status. Logs a `task.status` event when the status
+ * actually changes. `canceled` stamps canceled_at.
+ */
+export function transitionTaskStatus(
+  taskId: string,
+  status: TaskStatus,
+  db: Database = getDb(),
+): TaskRow | null {
+  const existing = getTask(taskId, db)
+  if (!existing) return null
+  if (existing.status === status) return existing
+  const timestamp = now()
+  const canceledAt = status === "canceled" ? timestamp : existing.canceledAt
+  db.query(
+    "UPDATE tasks SET status = ?, canceled_at = ?, updated_at = ? WHERE id = ?",
+  ).run(status, canceledAt, timestamp, taskId)
+  const updated = getTask(taskId, db)!
+  addEvent(
+    "task.status",
+    `Task ${taskId} ${existing.status} → ${status}`,
+    { taskId, from: existing.status, to: status },
+    db,
+  )
+  return updated
 }
 
 export function cancelTask(taskId: string, db: Database = getDb()): TaskRow | null {

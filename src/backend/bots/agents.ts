@@ -23,9 +23,14 @@ import {
   getLatestAgentByProjectRole,
   getProject,
   getProjectByPath,
+  getTaskCeoAgent,
+  getTaskIdForAgent,
   listAgents,
   listLiveAgents,
   listProjects,
+  listQueuedMessagesForTask,
+  listTasksWithQueuedMessages,
+  markMessageDelivered,
   updateAgent,
   type AgentRow,
   type AgentRole,
@@ -432,18 +437,20 @@ export async function reconcileAgents(): Promise<{ checked: number; changed: num
   const live = listLiveAgents()
   let changed = 0
   for (const agent of live) {
+    // Task ref for CEO agents, so reconcile events carry data.taskId.
+    const ceoTaskId = agent.role === "ceo" ? getTaskIdForAgent(agent.id, "ceo") : null
     try {
       if (agent.mode === "terminal") {
         if (!agent.hcAddress) {
           updateAgent(agent.id, { status: "error", lastError: "spawn incomplete: no terminal address" })
-          addEvent("bot.reconcile", `Agent ${agent.id} has no terminal (crash during spawn?)`, { agentId: agent.id })
+          addEvent("bot.reconcile", `Agent ${agent.id} has no terminal (crash during spawn?)`, { agentId: agent.id, ...(ceoTaskId ? { taskId: ceoTaskId } : {}) })
           changed += 1
           continue
         }
         const terminal = await getTerminal(agent.hcAddress)
         if (!terminal) {
           updateAgent(agent.id, { status: "stopped", stoppedAt: new Date().toISOString(), lastError: "terminal missing" })
-          addEvent("bot.exited", `Agent ${agent.id} terminal missing`, { agentId: agent.id })
+          addEvent("bot.exited", `Agent ${agent.id} terminal missing`, { agentId: agent.id, ...(ceoTaskId ? { taskId: ceoTaskId } : {}) })
           changed += 1
           continue
         }
@@ -458,6 +465,7 @@ export async function reconcileAgents(): Promise<{ checked: number; changed: num
             agentId: agent.id,
             exitCode: terminal.exitCode,
             reason: terminal.reason,
+            ...(ceoTaskId ? { taskId: ceoTaskId } : {}),
           })
           changed += 1
           continue
@@ -469,6 +477,9 @@ export async function reconcileAgents(): Promise<{ checked: number; changed: num
       } else {
         if (!agent.sessionId) {
           updateAgent(agent.id, { status: "error", lastError: "headless agent has no session" })
+          if (ceoTaskId) {
+            addEvent("bot.reconcile", `Agent ${agent.id} has no session (crash during spawn?)`, { agentId: agent.id, taskId: ceoTaskId })
+          }
           changed += 1
           continue
         }
@@ -478,16 +489,41 @@ export async function reconcileAgents(): Promise<{ checked: number; changed: num
           if (agent.status !== "running") updateAgent(agent.id, { status: "running" })
         } catch {
           updateAgent(agent.id, { status: "error", lastError: "session unreachable" })
-          addEvent("bot.reconcile", `Agent ${agent.id} session unreachable`, { agentId: agent.id })
+          addEvent("bot.reconcile", `Agent ${agent.id} session unreachable`, { agentId: agent.id, ...(ceoTaskId ? { taskId: ceoTaskId } : {}) })
           changed += 1
         }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       updateAgent(agent.id, { status: "error", lastError: message })
-      addEvent("bot.reconcile_failed", `Agent ${agent.id} reconcile failed: ${message}`, { agentId: agent.id, message })
+      addEvent("bot.reconcile_failed", `Agent ${agent.id} reconcile failed: ${message}`, { agentId: agent.id, message, ...(ceoTaskId ? { taskId: ceoTaskId } : {}) })
       changed += 1
     }
+  }
+
+  // v4: flush queued task messages to idle task CEOs (best effort, never
+  // forces; delivery uses the same prompt path as `agents.prompt`).
+  try {
+    for (const task of listTasksWithQueuedMessages()) {
+      const ceo = getTaskCeoAgent(task.taskId)
+      if (!ceo || ceo.status !== "running") continue
+      for (const message of listQueuedMessagesForTask(task.taskId)) {
+        try {
+          await promptAgentCore(ceo, message.text)
+        } catch {
+          break // busy/blocked/unreachable — keep the message queued, keep order
+        }
+        markMessageDelivered(message.id)
+        addEvent(
+          "task.message_delivered",
+          `Agent ${ceo.id} received queued ${message.direction} message ${message.id}`,
+          { taskId: task.taskId, agentId: ceo.id, messageId: message.id, direction: message.direction },
+        )
+      }
+    }
+  } catch (flushError) {
+    // Reconcile must stay safe: log, never throw.
+    console.error(`kbots-daemon: queued message flush failed: ${flushError instanceof Error ? flushError.message : String(flushError)}`)
   }
   return { checked: live.length, changed }
 }

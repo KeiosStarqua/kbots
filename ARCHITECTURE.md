@@ -5,14 +5,14 @@
 `kbots` is a local coding workflow orchestrator. Its intended runtime has one
 long-lived Bun daemon that owns project/workflow state and OpenCode sessions,
 with Rust command-line, desktop, and terminal clients. The repository currently
-contains the OpenCode smoke/control utilities, the minimal v1 workflow daemon,
-project configuration and idle session setup, and the Rust clients. The
-daemon is implemented in minimal v1 form (`src/backend/daemon.ts`, started
-with `bun run daemon`, deployed as the `kbots-daemon` systemd user service by
-`./install.sh`); the orchestrator/workflow engine, scheduling, and full
-persistence repositories remain planned. The IPC contract in
-`docs/kbots-ipc.md` is served by the v1 daemon. The terminal
-UI is demo-only. The Slint GUI connects to the v1 daemon.
+contains the OpenCode smoke/control utilities, the v1 workflow daemon extended
+with the v2 task-centric dispatch surface (`docs/kbots-ipc.md`, "v2 methods":
+schema v4, per-task CEO session pool, `tasks.message`/`tasks.brief`/`tasks.inbox`/`tasks.update`,
+auto-dispatch on `tasks.create`), project configuration and idle session setup,
+and the Rust clients; scheduling, workflow state transitions beyond dispatch,
+and full persistence repositories remain planned. The IPC contract in
+`docs/kbots-ipc.md` is served by the daemon. The terminal UI connects to the
+daemon and renders a live task-centric dashboard; the Slint GUI also connects.
 
 This distinction matters when reading the design below: **implemented** means
 the code exists in this repository; **planned** means the responsibility or
@@ -56,7 +56,7 @@ and work without that daemon.
 | --- | --- | --- |
 | `src/backend/cli/` | Transitional Bun command entry points for OpenCode control and bot session startup | Implemented |
 | `src/backend/opencode/` | Shared OpenCode service/session adapter | Planned module boundary; behavior currently lives in CLI scripts |
-| `src/backend/orchestrator/` | v1 task/project/approval/system services; file-change watcher (`orchestrator/watchers.ts`) prompts the managed git agent on working-tree deltas with debounce + cooldown; scheduling, workflow state transitions, event ingestion, restart reconciliation | v1 services + git watcher implemented; workflow engine and scheduling still planned |
+| `src/backend/orchestrator/` | v1 task/project/approval/system services; v2 task dispatch (`orchestrator/dispatch.ts`: auto-dispatch, CEO session pool, idempotent via `task_agents` unique CEO link, per-project cap `KBOTS_CEO_CAP`) and message delivery (`orchestrator/delivery.ts`); file-change watcher (`orchestrator/watchers.ts`) prompts the managed git agent on working-tree deltas with debounce + cooldown; scheduling and broader workflow engine still planned | v1 services + git watcher + v2 dispatch implemented; scheduling/workflow engine still planned |
 | `src/backend/workflows/` | Task stages, dependencies, acceptance criteria, retry and approval rules | Planned |
 | `src/backend/bots/` | agents.list implemented (incl. managed `agents.start/show/stop/prompt/interrupt` lifecycle: exact session binding, terminal+headless modes, SQLite registry, boot reconciliation); CEO planning/review, GIT and OPS work contracts, coding worker policies | Lifecycle implemented; work contracts still planned |
 | `src/backend/adapters/` | Herdr adapter (read-only `hc ls`) implemented; Git and optional agmsg integrations | Herdr implemented; Git/agmsg planned |
@@ -64,7 +64,7 @@ and work without that daemon.
 | `src/backend/daemon.ts` | Bun daemon entry point: newline-delimited JSON-RPC over a Unix domain socket, SQLite-backed | Implemented (v1 minimal); deployed as the `kbots-daemon` systemd user service by install.sh (opt out with `KBOTS_SKIP_DAEMON_UNIT=1`) |
 | `cli/` | Rust `kbots` automation client, local project scaffolding/configuration, UI launch | Implemented |
 | `gui/` | Native Slint operator client | UI and RPC calls implemented; connects to the v1 daemon |
-| `tui/control-center/` | Native Ratatui dashboard | Demo scaffold; no daemon connection |
+| `tui/control-center/` | Native Ratatui dashboard; v1+v2 daemon client (live tasks/agents/approvals/events, task composer, `/brief`, `/inbox`) | Implemented; connects to the daemon |
 | `docs/` | Detailed OpenCode and IPC operational contracts | Implemented documentation |
 | `install.sh` | Frozen Bun install, TypeScript check, Rust builds, binary and desktop launcher install | Implemented |
 
@@ -170,11 +170,14 @@ errors. It resolves socket configuration using the same override pattern as
 the CLI. Its UI source is `gui/main.slint`; RPC integration is in
 `gui/src/main.rs`.
 
-The Ratatui TUI currently renders demo data and navigation for overview,
-projects, tasks, agents, approvals, and activity. It does not connect to the
-socket yet. It is intended for terminal environments including SSH, Mosh,
-tmux, or Herdr. Exiting it must restore terminal state; it must not stop the
-daemon or its agents. The TUI's narrow layout adapts below 112 columns.
+The Ratatui TUI renders a live task-centric dashboard backed by the v1+v2
+RPC surface: overview counts, real tasks/agents/approvals/activity, a task
+composer (plain text creates a task; `@N text` routes to that task's CEO;
+`/brief`, `/inbox`, `/done N`, `/blocked N`), and an inbox badge. It reconnects
+on socket failure and polls only when the data may have changed. It is
+intended for terminal environments including SSH, Mosh, tmux, or Herdr.
+Exiting it must restore terminal state; it must not stop the daemon or its
+agents. The TUI's narrow layout adapts below 112 columns.
 
 Neither UI owns workflow policy, persistence, scheduling, or agent execution.
 The daemon continues working if a UI disconnects or exits.
@@ -190,7 +193,8 @@ above. The v1 RPC surface includes:
 | Method | Purpose |
 | --- | --- |
 | `system.status` | Daemon and workflow summary |
-| `tasks.create`, `tasks.list`, `tasks.get`, `tasks.cancel` | Task lifecycle |
+| `tasks.create`, `tasks.list`, `tasks.get`, `tasks.cancel` | Task lifecycle; `tasks.create` auto-dispatches by default (`autoDispatch: false` opts out) |
+| `tasks.message`, `tasks.messages`, `tasks.brief`, `tasks.inbox`, `tasks.update` | v2 task-centric dispatch: follow-up routing to the task's CEO, queued-message backlog, DB-composed briefings, unified needs-action inbox, operator status transitions |
 | `projects.register`, `projects.list`, `projects.get` | Project registry |
 | `agents.list` | Bot roles, runs, session identifiers, and managed bots (`managed`) |
 | `agents.start`, `agents.show`, `agents.stop`, `agents.interrupt`, `agents.prompt` | Managed bot lifecycle: exact session binding, terminal+headless modes, SQLite registry |
@@ -198,11 +202,11 @@ above. The v1 RPC surface includes:
 | `events.list` | Recent activity for the GUI |
 
 Each request carries `jsonrpc: "2.0"`, an ID, method, and params; responses
-carry the same ID and either a result or error. This is a v1 contract served by
+carry the same ID and either a result or error. This is served by
 `src/backend/daemon.ts` (`bun run daemon`). Creating a task records it
-(status `"planning"`) and logs an event; nothing auto-dispatches it to a bot
-yet, and tasks are not wired to OpenCode prompting. `tasks.cancel` is
-idempotent, `projects.register` upserts by canonical path, `approvals.approve`
+(status `queued` with v2) and, by default, auto-dispatches it to a per-task
+CEO session (see "With v2" below). `tasks.cancel` is idempotent,
+`projects.register` upserts by canonical path, `approvals.approve`
 only records the decision (no protected operation is auto-executed), and
 `agents.list` is read-only; the managed lifecycle (`agents.start/show/stop/
 interrupt/prompt`) is documented in [`docs/kbots-ipc.md`](docs/kbots-ipc.md)
@@ -210,6 +214,15 @@ interrupt/prompt`) is documented in [`docs/kbots-ipc.md`](docs/kbots-ipc.md)
 a `starting → running → stopping → stopped/error` state model, boot-time
 reconciliation, and prompts refused unless the agent is idle. Unknown
 methods return `-32601`. Clients must not write workflow state directly.
+With v2, `tasks.create` auto-dispatches to a per-task CEO session by default
+(`autoDispatch: false` opts out); dispatch failure does not fail the RPC — the
+result carries `dispatchError` and the task stays `queued`. `tasks.list`
+accepts a `status` filter; `tasks.get` returns the `ceo` link and
+`pendingMessageCount`. The v2 methods never round-trip to the model:
+briefings and the inbox are composed from SQLite. The full v2 semantics,
+schema v4 summary, and honest limitations are documented in
+[`docs/kbots-ipc.md`](docs/kbots-ipc.md) and
+[`docs/plans/2026-11-18-task-centric-mission-control.md`](docs/plans/2026-11-18-task-centric-mission-control.md).
 
 ## Planned workflow and persistence model
 
@@ -242,6 +255,7 @@ remain unimplemented in the current tree.
 | `OPENCODE_MODEL` | Smoke check | `provider/model`; defaults to `opencode/inkling-2-small-free` |
 | `OPENCODE_DB_PATH` | Smoke check | Override OpenCode CLI database path |
 | `KIR_AUTO_DIRECTORY` | Session control | Overrides sibling `film-production/.agents/bot/kir-auto` default |
+| `KBOTS_CEO_CAP` | Daemon | Per-project active-CEO dispatch cap; defaults to 4 |
 | `KBOTS_SOCKET` | CLI and GUI | Overrides the default daemon socket |
 | `XDG_RUNTIME_DIR` | CLI and GUI | Supplies the default socket parent directory |
 | `XDG_STATE_HOME` | Session startup; daemon | Supplies the root for saved session IDs and the daemon SQLite database |

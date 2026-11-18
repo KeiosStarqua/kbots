@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 3
+export const SCHEMA_VERSION = 4
 
 // v1 → v2 delta: the managed agent registry. Applied to databases already at
 // user_version 1; fresh databases run SCHEMA_DDL which embeds everything.
@@ -23,7 +23,7 @@ CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project_id);
 CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_active_project_role
   ON agents(project_id, role)
-  WHERE status IN ('starting','running','stopping');
+  WHERE status IN ('starting','running','stopping') AND role != 'ceo';
 `
 
 // v2 → v3 delta: per-project file-change watchers (git working tree).
@@ -44,6 +44,80 @@ CREATE TABLE IF NOT EXISTS watchers(
 );
 `
 
+// v3 → v4 delta: task-centric mission control.
+// Rebuilds `tasks` (SQLite cannot alter a CHECK) preserving ids and remapping
+// legacy statuses: planning → queued, in_progress → running, completed → done,
+// canceled unchanged. The rebuild also adds the new `goal`/`detail` columns.
+// Creates task_agents / task_messages / task_briefs and narrows
+// idx_agents_active_project_role to role != 'ceo' (many active CEOs per
+// project allowed; git/ops unchanged).
+//
+// The caller wraps this in `PRAGMA foreign_keys = OFF/ON` because approvals
+// references tasks(id) and DROP TABLE would implicitly delete referenced rows.
+export const TASKS_V4_DDL = `
+DROP TABLE IF EXISTS tasks_v4;
+CREATE TABLE tasks_v4(
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('queued','researching','planning','delegating','running','review','blocked','done','failed','canceled')),
+  project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  canceled_at TEXT,
+  goal TEXT,
+  detail TEXT
+);
+INSERT INTO tasks_v4(id, title, status, project_id, created_at, updated_at, canceled_at, goal, detail)
+  SELECT id, title,
+    CASE status
+      WHEN 'planning' THEN 'queued'
+      WHEN 'in_progress' THEN 'running'
+      WHEN 'completed' THEN 'done'
+      ELSE status
+    END,
+    project_id, created_at, updated_at, canceled_at, NULL, NULL
+  FROM tasks;
+DROP TABLE tasks;
+ALTER TABLE tasks_v4 RENAME TO tasks;
+CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+
+CREATE TABLE IF NOT EXISTS task_agents(
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK(role IN ('ceo','worker','git','ops')),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (task_id, agent_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_task_agents_ceo ON task_agents(task_id) WHERE role = 'ceo';
+CREATE INDEX IF NOT EXISTS idx_task_agents_agent ON task_agents(agent_id);
+
+CREATE TABLE IF NOT EXISTS task_messages(
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  ts TEXT NOT NULL,
+  direction TEXT NOT NULL CHECK(direction IN ('user','system')),
+  text TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('queued','delivered','canceled')),
+  delivered_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_task_messages_task ON task_messages(task_id, status);
+
+CREATE TABLE IF NOT EXISTS task_briefs(
+  task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+  summary TEXT,
+  decisions TEXT,      -- newline-separated, newest last
+  blockers TEXT,       -- newline-separated; empty when none
+  next_step TEXT,
+  updated_at TEXT NOT NULL
+);
+
+DROP INDEX IF EXISTS idx_agents_active_project_role;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_active_project_role
+  ON agents(project_id, role)
+  WHERE status IN ('starting','running','stopping') AND role != 'ceo';
+`
+
 export const SCHEMA_DDL = `
 CREATE TABLE IF NOT EXISTS projects(
   id TEXT PRIMARY KEY,
@@ -57,11 +131,13 @@ CREATE TABLE IF NOT EXISTS projects(
 CREATE TABLE IF NOT EXISTS tasks(
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
-  status TEXT NOT NULL CHECK(status IN ('planning','in_progress','completed','canceled')),
+  status TEXT NOT NULL CHECK(status IN ('queued','researching','planning','delegating','running','review','blocked','done','failed','canceled')),
   project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  canceled_at TEXT
+  canceled_at TEXT,
+  goal TEXT,
+  detail TEXT
 );
 
 CREATE TABLE IF NOT EXISTS approvals(
@@ -112,7 +188,7 @@ CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project_id);
 CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_active_project_role
   ON agents(project_id, role)
-  WHERE status IN ('starting','running','stopping');
+  WHERE status IN ('starting','running','stopping') AND role != 'ceo';
 
 CREATE TABLE IF NOT EXISTS watchers(
   project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
@@ -126,6 +202,36 @@ CREATE TABLE IF NOT EXISTS watchers(
   last_change_at TEXT,
   last_delivered_at TEXT,
   created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS task_agents(
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK(role IN ('ceo','worker','git','ops')),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (task_id, agent_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_task_agents_ceo ON task_agents(task_id) WHERE role = 'ceo';
+CREATE INDEX IF NOT EXISTS idx_task_agents_agent ON task_agents(agent_id);
+
+CREATE TABLE IF NOT EXISTS task_messages(
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  ts TEXT NOT NULL,
+  direction TEXT NOT NULL CHECK(direction IN ('user','system')),
+  text TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('queued','delivered','canceled')),
+  delivered_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_task_messages_task ON task_messages(task_id, status);
+
+CREATE TABLE IF NOT EXISTS task_briefs(
+  task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+  summary TEXT,
+  decisions TEXT,      -- newline-separated, newest last
+  blockers TEXT,       -- newline-separated; empty when none
+  next_step TEXT,
   updated_at TEXT NOT NULL
 );
 `

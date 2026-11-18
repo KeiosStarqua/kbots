@@ -14,18 +14,22 @@ The package has three entry points:
 - **`control`** connects to the registered local OpenCode service. It can
   report service and provider information, inspect sessions, send prompts, or
   interrupt a session's current run.
-- **`daemon`** starts the minimal v1 Bun daemon: newline-delimited JSON-RPC
+- **`daemon`** starts the Bun daemon: newline-delimited JSON-RPC
   2.0 over a Unix domain socket, backed by SQLite. Run it with
-  `bun run daemon`.
+  `bun run daemon`. It serves the v1 surface plus the v2
+  task-centric dispatch surface documented in
+  [`docs/kbots-ipc.md`](docs/kbots-ipc.md) (auto-dispatch on task creation,
+  per-task CEO sessions, briefings, inbox).
 
 ## Control Center starter
 
 The workspace separates the Bun backend in `src/backend/` from the Rust/Slint
 desktop client in `gui/control-center/` and the Rust/Ratatui terminal client in
-`tui/control-center/`. The desktop app connects to one Bun daemon; the TUI
-does not yet. The dashboards include navigation, project/task/agent/approval
-summaries, agent activity, a task queue, and recent events. The TUI displays
-demo data. The `kbots` automation entry
+`tui/control-center/`. Both UI clients connect to one Bun daemon. The dashboards
+include navigation, project/task/agent/approval summaries, agent activity, a task
+queue, and recent events. The TUI renders live data (plus a task composer with
+`/brief`, `/inbox`, `/done`, `/blocked`) and requires the daemon; the
+`kbots` automation entry
 point is in `cli/` and uses the v1 JSON-RPC socket contract.
 
 After completing application changes, install the latest GUI, TUI, and CLI
@@ -58,7 +62,7 @@ Start the terminal dashboard in Herdr, tmux, SSH, or Mosh with:
 cargo run --manifest-path tui/control-center/Cargo.toml
 ```
 
-The TUI demo adapts to narrow terminal widths and uses arrow keys or `h`/`j`/`k`/`l`
+The TUI adapts to narrow terminal widths and uses arrow keys or `h`/`j`/`k`/`l`
 to navigate, `1`–`6` to jump to a section, and `q` or `Esc` to exit. The CLI can
 launch either UI and defines automation commands for status, tasks, projects,
 agents, and approvals. Until the daemon is running, those API commands return
@@ -93,7 +97,9 @@ See [`gui/README.md`](gui/README.md) and [`tui/README.md`](tui/README.md) for
 the clients and planned IPC boundary, and
 [`src/backend/README.md`](src/backend/README.md) for backend module ownership.
 See [`cli/README.md`](cli/README.md) for the CLI commands and
-[`docs/kbots-ipc.md`](docs/kbots-ipc.md) for their JSON-RPC contract.
+[`docs/kbots-ipc.md`](docs/kbots-ipc.md) for their JSON-RPC contract,
+[`docs/plans/2026-11-18-task-centric-mission-control.md`](docs/plans/2026-11-18-task-centric-mission-control.md)
+for the task-centric Mission Control design.
 
 ## Requirements and setup
 
@@ -213,6 +219,8 @@ requires `--session` and cannot be combined with `--prompt`.
 | --- | --- | --- |
 | `OPENCODE_MODEL` | `smoke` | `opencode/inkling-2-small-free` |
 | `OPENCODE_DB_PATH` | `smoke` | Path from `opencode debug paths db` |
+| `KBOTS_CEO_CAP` | Daemon | Per-project active-CEO dispatch cap; defaults to 4 |
+| `KBOTS_SOCKET` | CLI, GUI, TUI | Overrides the default daemon socket |
 | `KIR_AUTO_DIRECTORY` | `control` session commands | Sibling `film-production/.agents/bot/kir-auto` directory |
 | `--model` | `control` new sessions | Service default |
 | `--directory` | `control` | Current directory, except session commands default to `kir-auto` |

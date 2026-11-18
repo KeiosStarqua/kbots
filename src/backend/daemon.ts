@@ -5,9 +5,9 @@
  * contract from docs/kbots-ipc.md over a Unix domain socket. One newline-
  * delimited request per connection; one newline-delimited response.
  *
- * v1 scope: task records, project registry, approvals log, event log, and
- * read-only agent session inspection. Nothing in here prompts an agent or
- * dispatches work — the orchestrator/workflow engine is still planned.
+ * v2 scope: task records with auto-dispatch to per-task OpenCode CEO
+ * sessions, project registry, approvals log, event log, and managed agent
+ * lifecycle (agents.* / reconcileAgents). One request/response per connection.
  *
  * Start manually: `bun run daemon` (or `bun run src/backend/daemon.ts`).
  * Socket resolution (same order as the CLI): --socket PATH, KBOTS_SOCKET,
@@ -20,7 +20,17 @@ import { createServer, type Socket } from "node:net"
 
 import { RpcError } from "./errors.ts"
 import { registerProjectHandler, listProjectsHandler, getProjectHandler } from "./orchestrator/projects.ts"
-import { createTaskHandler, listTasksHandler, getTaskHandler, cancelTaskHandler } from "./orchestrator/tasks.ts"
+import {
+  createTaskHandler,
+  listTasksHandler,
+  getTaskHandler,
+  cancelTaskHandler,
+  tasksUpdateHandler,
+  tasksMessageHandler,
+  tasksMessagesHandler,
+  tasksBriefHandler,
+  tasksInboxHandler,
+} from "./orchestrator/tasks.ts"
 import { listApprovalsHandler, approveApprovalHandler } from "./orchestrator/approvals.ts"
 import { listEventsHandler } from "./orchestrator/events.ts"
 import { systemStatusHandler, DAEMON_NAME } from "./orchestrator/system.ts"
@@ -72,6 +82,11 @@ function buildHandlers(socket: string): Record<string, Handler> {
     "tasks.list": listTasksHandler,
     "tasks.get": getTaskHandler,
     "tasks.cancel": cancelTaskHandler,
+    "tasks.update": tasksUpdateHandler,
+    "tasks.message": tasksMessageHandler,
+    "tasks.messages": tasksMessagesHandler,
+    "tasks.brief": tasksBriefHandler,
+    "tasks.inbox": tasksInboxHandler,
     "projects.register": registerProjectHandler,
     "projects.list": () => listProjectsHandler(),
     "projects.get": getProjectHandler,
