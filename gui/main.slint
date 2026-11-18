@@ -1,4 +1,7 @@
-import { Button, LineEdit, ScrollView } from "std-widgets.slint";
+import { Button, CheckBox, LineEdit, ScrollView } from "std-widgets.slint";
+
+export struct TerminalCell { text: string, foreground: color, background: color, bold: bool, italic: bool, underline: bool }
+export struct TerminalItem { address: string, name: string, cwd: string, agent: string, status: string }
 
 export component MainWindow inherits Window {
     title: "kbots Control Center";
@@ -18,10 +21,33 @@ export component MainWindow inherits Window {
     in-out property <string> project-path;
     in-out property <string> project-name;
     in-out property <string> item-id;
+    in-out property <[TerminalItem]> terminals: [];
+    in-out property <[string]> attached-terminals: [];
+    in-out property <[TerminalCell]> terminal-cells: [];
+    in-out property <string> terminal-address;
+    in-out property <string> terminal-status: "Herdr Core not connected";
+    in-out property <bool> terminal-observe: false;
+    in-out property <int> terminal-cols: 100;
+    in-out property <int> terminal-rows: 32;
+    property <length> watched-width: root.width;
+    property <length> watched-height: root.height;
 
     callback refresh(); callback load-tasks(); callback create-task(); callback cancel-task();
     callback load-projects(); callback register-project(); callback configure-project(); callback start-sessions(); callback load-agents();
     callback load-approvals(); callback approve(); callback load-activity(); callback show-item();
+    callback refresh-terminals(); callback attach-terminal(); callback terminal-input(string); callback terminal-resize(int, int); callback terminal-focus(bool); callback terminal-scrollback(int);
+    callback update-terminal-size();
+
+    changed watched-width => { root.update-terminal-size(); }
+    changed watched-height => { root.update-terminal-size(); }
+
+    update-terminal-size() => {
+        let cols = Math.max(40, Math.min(180, Math.floor((root.width / 1px - 260) / 9)));
+        let rows = Math.max(12, Math.min(80, Math.floor((root.height / 1px - 240) / 18)));
+        root.terminal-cols = cols;
+        root.terminal-rows = rows;
+        root.terminal-resize(cols, rows);
+    }
 
     VerticalLayout {
         spacing: 0px;
@@ -46,7 +72,7 @@ export component MainWindow inherits Window {
                 VerticalLayout {
                     padding: 14px; spacing: 5px;
                     Text { text: "WORKSPACE"; color: #86948b; font-size: 10px; font-weight: 700; height: 28px; vertical-alignment: center; }
-                    for page[index] in ["Overview", "Projects", "Tasks", "Agents", "Approvals", "Activity log", "Settings"] : Rectangle {
+                    for page[index] in ["Overview", "Projects", "Tasks", "Agents", "Terminals", "Approvals", "Activity log", "Settings"] : Rectangle {
                         height: 40px; border-radius: 7px; background: root.active-page == page ? #243029 : transparent;
                         Text { text: page; color: root.active-page == page ? #eff5f0 : #9daaa1; vertical-alignment: center; x: 12px; }
                         TouchArea { clicked => { root.active-page = page; } }
@@ -99,6 +125,82 @@ export component MainWindow inherits Window {
                     if root.active-page == "Agents": HorizontalLayout {
                         Button { text: "List agents"; clicked => { root.load-agents(); } }
                         Text { text: "Agent execution and sessions are owned by the daemon."; color: #9daaa1; vertical-alignment: center; }
+                    }
+                    if root.active-page == "Terminals": VerticalLayout {
+                        spacing: 10px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Button { text: "Discover live terminals"; clicked => { root.refresh-terminals(); } }
+                            LineEdit { placeholder-text: "Terminal address (for example t7)"; text <=> root.terminal-address; }
+                            Button { text: "Attach"; clicked => { root.attach-terminal(); } }
+                            CheckBox { text: "Observe only"; checked <=> root.terminal-observe; }
+                            Text { text: root.terminal-status; color: #a5d6a7; vertical-alignment: center; }
+                        }
+                        Rectangle {
+                            height: 132px; background: #141b17; border-radius: 8px;
+                            ScrollView {
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    for terminal in root.terminals: Rectangle {
+                                        width: 220px; height: 116px; border-radius: 7px;
+                                        background: root.terminal-address == terminal.address ? #243029 : #101512;
+                                        border-width: 1px; border-color: #28332c;
+                                        VerticalLayout {
+                                            padding: 10px; spacing: 3px;
+                                            Text { text: terminal.name + " · " + terminal.address; color: #eff5f0; font-weight: 700; }
+                                            Text { text: terminal.agent + " · " + terminal.status; color: #a5d6a7; }
+                                            Text { text: terminal.cwd; color: #9daaa1; font-size: 10px; wrap: word-wrap; }
+                                        }
+                                        TouchArea { clicked => { root.terminal-address = terminal.address; } }
+                                    }
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Text { text: "ATTACHED"; color: #86948b; font-size: 10px; vertical-alignment: center; }
+                            for address in root.attached-terminals: Button {
+                                text: address;
+                                clicked => { root.terminal-address = address; root.attach-terminal(); }
+                            }
+                        }
+                        Rectangle {
+                            background: #101218; border-width: 1px; border-color: #28332c; border-radius: 8px;
+                            min-height: 576px;
+                            // A cell grid preserves the colors and cursor positioning supplied by VT output.
+                            for cell[index] in root.terminal-cells: Rectangle {
+                                x: Math.mod(index, root.terminal-cols) * 9px;
+                                y: Math.floor(index / root.terminal-cols) * 18px;
+                                width: 9px; height: 18px; background: cell.background;
+                                Text { text: cell.text; color: cell.foreground; font-family: "monospace"; font-size: 13px; font-weight: cell.bold ? 700 : 400; font-italic: cell.italic; }
+                                if cell.underline: Rectangle { x: 0px; y: 16px; width: 9px; height: 1px; background: cell.foreground; }
+                            }
+                            focus-scope := FocusScope {
+                                x: 0; y: 0; width: 1px; height: 1px;
+                                changed has-focus => { root.terminal-focus(self.has-focus); }
+                                key-pressed(event) => {
+                                    if (event.modifiers.control && event.text == "c") { root.terminal-input("\u{3}"); return accept; }
+                                    if (event.modifiers.control && event.text == "d") { root.terminal-input("\u{4}"); return accept; }
+                                    if (event.modifiers.control && event.text == "z") { root.terminal-input("\u{1a}"); return accept; }
+                                    if (event.text == Key.Return) { root.terminal-input("\u{d}"); return accept; }
+                                    if (event.text == Key.Backspace) { root.terminal-input("\u{7f}"); return accept; }
+                                    if (event.text == Key.Tab) { root.terminal-input("\u{9}"); return accept; }
+                                    if (event.text == Key.Escape) { root.terminal-input("\u{1b}"); return accept; }
+                                    if (event.text == Key.Home) { root.terminal-input("\u{1b}[H"); return accept; }
+                                    if (event.text == Key.End) { root.terminal-input("\u{1b}[F"); return accept; }
+                                    if (event.text == Key.Delete) { root.terminal-input("\u{1b}[3~"); return accept; }
+                                    if (event.text == Key.PageUp) { root.terminal-scrollback(24); return accept; }
+                                    if (event.text == Key.PageDown) { root.terminal-scrollback(-24); return accept; }
+                                    if (event.text == Key.UpArrow) { root.terminal-input("\u{1b}[A"); return accept; }
+                                    if (event.text == Key.DownArrow) { root.terminal-input("\u{1b}[B"); return accept; }
+                                    if (event.text == Key.RightArrow) { root.terminal-input("\u{1b}[C"); return accept; }
+                                    if (event.text == Key.LeftArrow) { root.terminal-input("\u{1b}[D"); return accept; }
+                                    if (event.text != "") { root.terminal-input(event.text); return accept; }
+                                    return reject;
+                                }
+                            }
+                            TouchArea { clicked => { focus-scope.focus(); } }
+                        }
                     }
                     if root.active-page == "Approvals": VerticalLayout {
                         spacing: 10px;
