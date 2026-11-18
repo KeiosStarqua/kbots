@@ -5,7 +5,8 @@
   "private": true,
   "scripts": {
     "smoke": "bun run src/backend/smoke.ts",
-    "control": "bun run src/backend/cli/control.ts"
+    "control": "bun run src/backend/cli/control.ts",
+    "sessions:start": "bun run src/backend/cli/start-sessions.ts"
   },
   "devDependencies": {
     "@types/bun": "1.4.4",

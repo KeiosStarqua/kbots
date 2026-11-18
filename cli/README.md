@@ -17,6 +17,7 @@ kbots project add /path/to/project
 kbots project add --name "My Project"   # current directory
 kbots project configure /path/to/project
 kbots project configure --overwrite      # regenerate current project's OpenCode configs
+kbots sessions start --directory /path/to/project
 kbots project list
 kbots project show PROJECT-ID
 kbots approve DEPLOY-23
@@ -47,5 +48,13 @@ Projects that already have per-bot OpenCode configs are not auto-migrated:
 copy their settings into `.agents/bot/kbots.json`, then run
 `kbots project configure --overwrite`. Project-specific instructions and
 plugins stay local instead of being copied between repositories.
+
+`kbots sessions start` creates one idle OpenCode session for every enabled bot
+in the manifest, using each role's `.agents/bot/<role>` directory so its
+`opencode.jsonc` applies. It does not send a prompt or start agent work. Session
+IDs are stored with mode `0600` under `${XDG_STATE_HOME:-~/.local/state}/kbots/projects/`
+and reused on later runs when the OpenCode service still has them. The command
+connects to or starts the local OpenCode service; it does not require the
+workflow daemon.
 Their planned methods and newline-delimited JSON-RPC contract are documented
 in [`../docs/kbots-ipc.md`](../docs/kbots-ipc.md).

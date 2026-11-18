@@ -42,6 +42,11 @@ enum Commands {
         #[command(subcommand)]
         command: AgentCommands,
     },
+    /// Start the enabled OpenCode bot sessions for a project.
+    Sessions {
+        #[command(subcommand)]
+        command: SessionCommands,
+    },
     /// Register and inspect local projects.
     Project {
         #[command(subcommand)]
@@ -86,6 +91,16 @@ enum AgentCommands {
 }
 
 #[derive(Debug, Subcommand)]
+enum SessionCommands {
+    /// Create idle CEO, GIT, and OPS sessions defined by the project manifest.
+    Start {
+        /// Existing project directory (defaults to the current directory).
+        #[arg(long)]
+        directory: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum ProjectCommands {
     /// Register a local project (defaults to the current directory).
     Add {
@@ -127,6 +142,9 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             println!("{}", serde_json::to_string_pretty(&result)?);
             Ok(())
         }
+        Commands::Sessions {
+            command: SessionCommands::Start { directory },
+        } => run_sessions_start(directory),
         command => {
             let (method, params) = rpc_call(command)?;
             let socket = socket_path(cli.socket);
@@ -152,6 +170,7 @@ fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> 
         Commands::Agents {
             command: AgentCommands::List,
         } => ("agents.list", json!({})),
+        Commands::Sessions { .. } => unreachable!("session commands are handled before RPC"),
         Commands::Project { command } => match command {
             ProjectCommands::Add { path, name } => {
                 ("projects.register", register_project(path, name)?)
@@ -168,6 +187,32 @@ fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> 
         Commands::Gui | Commands::Tui => unreachable!("UI commands are handled before RPC"),
     };
     Ok(request)
+}
+
+fn run_sessions_start(directory: Option<PathBuf>) -> Result<(), Box<dyn Error>> {
+    let source_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    let script = source_root.join("src/backend/cli/start-sessions.ts");
+    if !script.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "kbots session manager script not found: {}",
+                script.display()
+            ),
+        )
+        .into());
+    }
+
+    let mut command = Command::new("bun");
+    command.arg("run").arg(script);
+    if let Some(directory) = directory {
+        command.arg("--directory").arg(directory);
+    }
+    let status = command.status()?;
+    if !status.success() {
+        return Err(io::Error::other(format!("session startup failed with {status}")).into());
+    }
+    Ok(())
 }
 
 fn register_project(path: Option<PathBuf>, name: Option<String>) -> Result<Value, Box<dyn Error>> {

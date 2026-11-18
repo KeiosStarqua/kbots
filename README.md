@@ -64,6 +64,7 @@ kbots project add /home/keios/repos/mein/kt-system
 kbots project add /home/keios/repos/mein/nsac --name NSAC
 kbots project list
 kbots project show <project-id>
+kbots sessions start --directory /home/keios/repos/mein/nsac
 ```
 
 Registration canonicalizes the project path and creates missing bot-role
@@ -72,6 +73,13 @@ editable `.agents/bot/kbots.json` manifest and generates each role's
 `opencode.jsonc`. Existing project configs are preserved. Edit the manifest
 and run `kbots project configure --overwrite` to regenerate them. Registry
 persistence still requires the Bun daemon.
+
+Start the idle OpenCode sessions for enabled roles with `kbots sessions start`.
+The command reads `.agents/bot/kbots.json`, uses each bot directory so its
+OpenCode config applies, and stores reusable session IDs in the user's
+`~/.local/state/kbots/projects/` directory. It does not send prompts; the
+sessions wait for work. It talks directly to the local OpenCode service, so
+the workflow daemon is not needed for this command.
 
 See [`gui/README.md`](gui/README.md) and [`tui/README.md`](tui/README.md) for
 the clients and planned IPC boundary, and

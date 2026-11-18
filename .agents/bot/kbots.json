@@ -1,0 +1,32 @@
+{
+  "bots": {
+    "ceo": {
+      "enabled": true,
+      "opencode": {
+        "instructions": [
+          ".agents/bot/ceo/AGENTS.md"
+        ],
+        "plugins": []
+      }
+    },
+    "git": {
+      "enabled": true,
+      "opencode": {
+        "instructions": [
+          ".agents/bot/git/AGENTS.md"
+        ],
+        "plugins": []
+      }
+    },
+    "ops": {
+      "enabled": true,
+      "opencode": {
+        "instructions": [
+          ".agents/bot/ops/AGENTS.md"
+        ],
+        "plugins": []
+      }
+    }
+  },
+  "version": 1
+}

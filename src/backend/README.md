@@ -13,6 +13,9 @@ continue running.
 - `adapters/`: Git, Herdr, and agmsg integrations.
 - `db/`: SQLite schema, migrations, and repositories.
 
-Current root package scripts use `smoke.ts` and `cli/control.ts` as transitional
-entry points. Move their implementation into the responsibility modules as the
-orchestrator is built.
+Current root package scripts use `smoke.ts`, `cli/control.ts`, and
+`cli/start-sessions.ts` as transitional entry points. The session starter
+creates or reuses idle OpenCode sessions for enabled bot roles from the project
+manifest; the workflow daemon will own this lifecycle when it is implemented.
+Move their implementation into the responsibility modules as the orchestrator
+is built.

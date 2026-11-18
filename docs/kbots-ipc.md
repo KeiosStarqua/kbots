@@ -41,6 +41,7 @@ Initial CLI methods:
 | `agents list` | `agents.list` | `{}` |
 | `project add [PATH] [--name NAME]` | `projects.register` | canonical `path`, display `name`, bot roles |
 | `project configure [PATH] [--overwrite]` | local CLI action | generate per-bot OpenCode configs from the manifest |
+| `sessions start [--directory PATH]` | local OpenCode client action | create or reuse idle sessions for enabled roles |
 | `project list` | `projects.list` | `{}` |
 | `project show ID` | `projects.get` | `projectId` |
 | `approve ID` | `approvals.approve` | `approvalId` |
@@ -62,6 +63,13 @@ regenerate from the manifest. Local plugin paths are made absolute so they
 resolve consistently when OpenCode runs from a service working directory.
 When a project already has OpenCode configs but no manifest, create the
 manifest from those existing settings before using `--overwrite`.
+
+`kbots sessions start` reads the enabled roles from the manifest and creates
+one idle session in each role directory. It records IDs in the user's local
+state directory and checks saved IDs against OpenCode before reusing them.
+Session creation does not prompt the agents. This local action talks directly
+to the OpenCode service and remains available before the workflow daemon is
+implemented.
 
 ## Bot folder convention
 
