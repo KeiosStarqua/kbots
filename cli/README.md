@@ -18,6 +18,7 @@ kbots tasks list --project api-service
 kbots tasks show TASK-104
 kbots agents list
 kbots agents list --project PRJ-1   # scope to one project when you have many
+kbots ag ls -p PRJ-1               # same, short form (alias: ag, ls, -p)
 kbots prj ls          # `prj` for `project`, `ls` for `list`
 kbots prj watch --project PRJ-1
 kbots agents start git --mode terminal

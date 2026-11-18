@@ -43,6 +43,7 @@ enum Commands {
         command: TaskCommands,
     },
     /// List registered coding agents.
+    #[command(visible_alias = "ag")]
     Agents {
         #[command(subcommand)]
         command: AgentCommands,
@@ -76,13 +77,13 @@ enum TaskCommands {
         /// Task description.
         title: String,
         /// Project identifier or path.
-        #[arg(long)]
+        #[arg(long, short = 'p')]
         project: Option<String>,
     },
     /// List tasks, optionally filtered by project.
     #[command(visible_alias = "ls")]
     List {
-        #[arg(long)]
+        #[arg(long, short = 'p')]
         project: Option<String>,
     },
     /// Show one task.
@@ -97,7 +98,7 @@ enum AgentCommands {
     #[command(visible_alias = "ls")]
     List {
         /// Only show this project (id, name, or path).
-        #[arg(long)]
+        #[arg(long, short = 'p')]
         project: Option<String>,
     },
     /// Start (or resume) a bot agent for a registered project.
@@ -109,7 +110,7 @@ enum AgentCommands {
         #[arg(long, value_enum, default_value_t = AgentMode::Terminal)]
         mode: AgentMode,
         /// Project id, name, or path (defaults to the current directory).
-        #[arg(long)]
+        #[arg(long, short = 'p')]
         project: Option<String>,
         /// Start a fresh session instead of resuming the existing one.
         #[arg(long)]
@@ -168,7 +169,7 @@ enum ProjectCommands {
     /// Manage the file-change watcher for a project (defaults to listing).
     Watch {
         /// Project id, name, or path (omit to list watchers).
-        #[arg(long)]
+        #[arg(long, short = 'p')]
         project: Option<String>,
         /// Disable the watcher instead of enabling it.
         #[arg(long)]
