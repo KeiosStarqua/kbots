@@ -1,0 +1,19 @@
+{
+  "name": "kbots",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "smoke": "bun run index.ts",
+    "control": "bun run control.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.4",
+    "typescript": "7.0.2"
+  },
+  "dependencies": {
+    "@opencode/client": "2.3.2",
+    "@opencode/plugin": "2.3.2",
+    "@opencode/sdk": "2.3.2"
+  }
+}
