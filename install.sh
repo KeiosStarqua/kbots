@@ -75,6 +75,13 @@ elif command -v systemctl >/dev/null 2>&1 && systemctl --user list-units >/dev/n
   systemctl --user daemon-reload
   systemctl --user enable --now kbots-daemon.service >/dev/null
   systemctl --user restart kbots-daemon.service
+  # Type=simple reports active before the daemon binds the socket, so give it a
+  # moment before returning (never fails the install).
+  socket_path="${KBOTS_SOCKET:-${XDG_RUNTIME_DIR:-$HOME/.local/run}/kbots.sock}"
+  for _ in $(seq 1 50); do
+    [[ -S "${socket_path}" ]] && break
+    sleep 0.2
+  done
   printf '\nDeployed kbots-daemon user service (starts on login, auto-restarts): %s\n' "${unit_dir}/kbots-daemon.service"
 else
   printf '\nsystemd user session unavailable; start the daemon manually with `bun run daemon`.\n'

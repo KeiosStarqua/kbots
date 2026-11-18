@@ -1,9 +1,12 @@
 # Automation CLI
 
 `kbots` is a Rust command-line client for automation. It exposes stable
-subcommands and JSON output, then sends daemon-owned operations over a local
-Unix domain socket. It does not implement orchestration or bypass daemon-side
-authorization and idempotency checks.
+subcommands, then sends daemon-owned operations over a local Unix domain
+socket. It does not implement orchestration or bypass daemon-side
+authorization and idempotency checks. When stdout is a terminal, output is a
+human-readable rendering (tables and summaries); when stdout is piped — or
+`--json` is passed — output is pretty-printed JSON, so scripts keep a stable
+machine-readable contract.
 
 Examples:
 
@@ -28,7 +31,8 @@ kbots gui
 Use `--socket PATH` or `KBOTS_SOCKET` to select the daemon socket. By default,
 the CLI uses `$XDG_RUNTIME_DIR/kbots.sock`, falling back to
 `$HOME/.local/run/kbots.sock`. The GUI and TUI paths can be overridden with
-`KBOTS_GUI_BIN` and `KBOTS_TUI_BIN`.
+`KBOTS_GUI_BIN` and `KBOTS_TUI_BIN`. Pass `--json` to force JSON output on a
+terminal (default when piped).
 
 The Bun daemon and JSON-RPC server exist (v1 minimal) and run as the
 `kbots-daemon` systemd user service after `./install.sh` (opt out with

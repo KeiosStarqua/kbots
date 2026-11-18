@@ -2,7 +2,7 @@ use std::{
     env,
     error::Error,
     fs,
-    io::{self, BufRead, BufReader, Write},
+    io::{self, BufRead, BufReader, IsTerminal, Write},
     path::PathBuf,
     process::{self, Command},
     time::Duration,
@@ -12,6 +12,7 @@ use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 
 mod project_config;
+mod render;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -23,6 +24,10 @@ struct Cli {
     /// Override the daemon's Unix socket path (or set KBOTS_SOCKET).
     #[arg(long, global = true, value_name = "PATH")]
     socket: Option<PathBuf>,
+
+    /// Print JSON output even when stdout is a terminal.
+    #[arg(long, global = true)]
+    json: bool,
 
     #[command(subcommand)]
     command: Commands,
@@ -139,19 +144,37 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             command: ProjectCommands::Configure { path, overwrite },
         } => {
             let result = project_config::configure_project(path, overwrite)?;
-            println!("{}", serde_json::to_string_pretty(&result)?);
+            emit("internal.project.configure", &result, cli.json);
             Ok(())
         }
         Commands::Sessions {
             command: SessionCommands::Start { directory },
-        } => run_sessions_start(directory),
+        } => run_sessions_start(directory, cli.json),
         command => {
             let (method, params) = rpc_call(command)?;
             let socket = socket_path(cli.socket);
             let response = request(&socket, method, params)?;
-            println!("{}", serde_json::to_string_pretty(&response)?);
+            emit(method, &response, cli.json);
             Ok(())
         }
+    }
+}
+
+fn emit(method: &str, value: &Value, force_json: bool) {
+    if force_json || !io::stdout().is_terminal() {
+        print_json(value);
+        return;
+    }
+    match render::render(method, value) {
+        Some(text) => println!("{text}"),
+        None => print_json(value),
+    }
+}
+
+fn print_json(value: &Value) {
+    match serde_json::to_string_pretty(value) {
+        Ok(text) => println!("{text}"),
+        Err(_) => println!("{value}"),
     }
 }
 
@@ -189,7 +212,7 @@ fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> 
     Ok(request)
 }
 
-fn run_sessions_start(directory: Option<PathBuf>) -> Result<(), Box<dyn Error>> {
+fn run_sessions_start(directory: Option<PathBuf>, force_json: bool) -> Result<(), Box<dyn Error>> {
     let source_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let script = source_root.join("src/backend/cli/start-sessions.ts");
     if !script.is_file() {
@@ -208,9 +231,31 @@ fn run_sessions_start(directory: Option<PathBuf>) -> Result<(), Box<dyn Error>> 
     if let Some(directory) = directory {
         command.arg("--directory").arg(directory);
     }
-    let status = command.status()?;
-    if !status.success() {
-        return Err(io::Error::other(format!("session startup failed with {status}")).into());
+    let output = command.output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.trim().is_empty() {
+        eprint!("{stderr}");
+    }
+    if !output.status.success() {
+        return Err(
+            io::Error::other(format!("session startup failed with {}", output.status)).into(),
+        );
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if force_json || !io::stdout().is_terminal() {
+        print!("{stdout}");
+        if !stdout.ends_with('\n') {
+            println!();
+        }
+        return Ok(());
+    }
+    match serde_json::from_str::<Value>(stdout.trim())
+        .ok()
+        .and_then(|value| render::render("internal.sessions.start", &value))
+    {
+        Some(text) => println!("{text}"),
+        None => print!("{stdout}"),
     }
     Ok(())
 }
