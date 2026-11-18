@@ -13,9 +13,15 @@ Examples:
 
 ```sh
 kbots status
-kbots tasks add "Implement authentication" --project api-service
+kbots tasks add "Implement authentication" --project api-service --goal "Ship JWT login" --detail "See docs/auth.md for the rollout plan"
 kbots tasks list --project api-service
 kbots tasks show TASK-104
+kbots tasks message TASK-104 "Please also update the tests"
+kbots tasks messages TASK-104
+kbots tasks brief
+kbots tasks brief TASK-104
+kbots tasks inbox
+kbots tasks update TASK-104 --status review --note "Ready for review"
 kbots agents list
 kbots agents list --project PRJ-1   # scope to one project when you have many
 kbots ag ls -p PRJ-1               # same, short form (alias: ag, ls, -p)
@@ -39,6 +45,19 @@ kbots approve DEPLOY-23
 kbots tui
 kbots gui
 ```
+
+The `tasks` subcommands (`add`, `list`, `show`, `cancel`, `message`, `messages`,
+`brief`, `inbox`, `update`) are all the same binary, so every one of them also works
+via the `kb` alias (for example `kb tasks inbox`). `tasks message TASK-ID TEXT`
+delivers a message to the task's CEO (or queues it when the CEO is busy);
+`tasks messages TASK-ID` lists the task's messages, newest last. `tasks brief`
+prints a global overview (generated time, task totals, and what needs action);
+`tasks brief TASK-ID` prints one task's brief — status, CEO, summary, decisions,
+blockers, next step, and pending message count. `tasks inbox` groups everything
+needing action by kind (`approval`, `blocked`, `failed`, `queued`, `review`); an
+empty inbox prints `Inbox clear.`. `tasks update TASK-ID --status STATUS [--note
+TEXT]` moves a task to `review`, `blocked`, `done`, `failed`, or `canceled` —
+the daemon validates the status and rejects terminal-state changes.
 
 `agents list` shows the registry, saved session IDs, and live Herdr terminals. Managed
 bots — spawned and tracked by the daemon with exact session binding — are started and

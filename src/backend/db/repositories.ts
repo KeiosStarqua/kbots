@@ -430,6 +430,7 @@ export interface TaskMessageRow {
   text: string
   status: TaskMessageStatus
   deliveredAt: string | null
+  attempts: number
 }
 
 interface TaskMessageRecord {
@@ -440,6 +441,7 @@ interface TaskMessageRecord {
   text: string
   status: string
   delivered_at: string | null
+  attempts: number
 }
 
 function toTaskMessageRow(record: TaskMessageRecord): TaskMessageRow {
@@ -451,6 +453,7 @@ function toTaskMessageRow(record: TaskMessageRecord): TaskMessageRow {
     text: record.text,
     status: record.status === "delivered" || record.status === "canceled" ? record.status : "queued",
     deliveredAt: record.delivered_at,
+    attempts: typeof record.attempts === "number" && Number.isFinite(record.attempts) ? record.attempts : 0,
   }
 }
 
@@ -483,6 +486,61 @@ export function listMessagesForTask(
     .query("SELECT * FROM task_messages WHERE task_id = ? ORDER BY ts ASC, id ASC LIMIT ?")
     .all(taskId, limit) as TaskMessageRecord[]
   return rows.map(toTaskMessageRow)
+}
+
+/** Bump the delivery-attempt counter; returns the updated row. */
+export function incrementMessageAttempts(
+  messageId: string,
+  db: Database = getDb(),
+): TaskMessageRow | null {
+  db.query("UPDATE task_messages SET attempts = attempts + 1 WHERE id = ?").run(messageId)
+  const row = db.query("SELECT * FROM task_messages WHERE id = ?").get(messageId) as TaskMessageRecord | null
+  return row ? toTaskMessageRow(row) : null
+}
+
+/** Mark a queued message canceled (existing status vocabulary). */
+export function cancelTaskMessage(
+  messageId: string,
+  db: Database = getDb(),
+): TaskMessageRow | null {
+  db.query("UPDATE task_messages SET status = 'canceled' WHERE id = ? AND status = 'queued'").run(messageId)
+  const row = db.query("SELECT * FROM task_messages WHERE id = ?").get(messageId) as TaskMessageRecord | null
+  return row ? toTaskMessageRow(row) : null
+}
+
+export const MESSAGE_ATTEMPT_LIMIT = 5
+const DELIVERY_BLOCKABLE_TASK_STATUSES: readonly TaskStatus[] = [
+  "researching",
+  "planning",
+  "delegating",
+  "running",
+]
+
+export const DELIVERY_FAILURE_BLOCKER =
+  "system: delivery failed after 5 attempts — OpenCode unresponsive or refusing"
+
+/**
+ * Give up on a queued message: cancel it, log `message.abandoned`, and move
+ * the task to `blocked` (with a note in task_briefs.blockers) when it is
+ * actively researching/planning/delegating/running. Best effort semantics —
+ * callers hold the taskId for context.
+ */
+export function abandonQueuedMessage(
+  message: TaskMessageRow,
+  db: Database = getDb(),
+): void {
+  cancelTaskMessage(message.id, db)
+  addEvent(
+    "message.abandoned",
+    `Message ${message.id} abandoned after ${message.attempts} attempts`,
+    { taskId: message.taskId, messageId: message.id, attempts: message.attempts },
+    db,
+  )
+  const task = getTask(message.taskId, db)
+  if (task && (DELIVERY_BLOCKABLE_TASK_STATUSES as readonly string[]).includes(task.status)) {
+    appendBriefBlocker(message.taskId, DELIVERY_FAILURE_BLOCKER, db)
+    transitionTaskStatus(message.taskId, "blocked", db)
+  }
 }
 
 export function markMessageDelivered(
@@ -656,6 +714,23 @@ export function appendBriefDecision(
   return upsertTaskBrief({ taskId, decisions }, db)
 }
 
+/** Append one line to the brief's blockers (newest last). */
+export function appendBriefBlocker(
+  taskId: string,
+  note: string,
+  db: Database = getDb(),
+): TaskBriefRow {
+  const line = note.trim()
+  const existing = getTaskBrief(taskId, db)
+  if (line.length === 0) {
+    return existing ?? upsertTaskBrief({ taskId }, db)
+  }
+  const blockers = existing?.blockers
+    ? `${existing.blockers.replace(/\n+$/, "")}\n${line}`
+    : line
+  return upsertTaskBrief({ taskId, blockers }, db)
+}
+
 /**
  * Move a task to a new status. Logs a `task.status` event when the status
  * actually changes. `canceled` stamps canceled_at.
@@ -795,6 +870,8 @@ export interface AgentRow {
   updatedAt: string
   stoppedAt: string | null
   lastError: string | null
+  lastOutcome: string | null
+  lastOutcomeAt: string | null
 }
 
 interface AgentRecord {
@@ -811,6 +888,8 @@ interface AgentRecord {
   updated_at: string
   stopped_at: string | null
   last_error: string | null
+  last_outcome: string | null
+  last_outcome_at: string | null
 }
 
 const AGENT_ROLES: readonly AgentRole[] = ["ceo", "git", "ops", "worker"]
@@ -833,6 +912,8 @@ function toAgentRow(record: AgentRecord): AgentRow {
     updatedAt: record.updated_at,
     stoppedAt: record.stopped_at,
     lastError: record.last_error,
+    lastOutcome: record.last_outcome ?? null,
+    lastOutcomeAt: record.last_outcome_at ?? null,
   }
 }
 
@@ -918,6 +999,8 @@ export function updateAgent(
     name: string | null
     stoppedAt: string | null
     lastError: string | null
+    lastOutcome: string | null
+    lastOutcomeAt: string | null
   }>,
   db: Database = getDb(),
 ): AgentRow | null {
@@ -930,6 +1013,8 @@ export function updateAgent(
   if ("name" in patch) { sets.push("name = ?"); values.push(patch.name ?? null) }
   if ("stoppedAt" in patch) { sets.push("stopped_at = ?"); values.push(patch.stoppedAt ?? null) }
   if ("lastError" in patch) { sets.push("last_error = ?"); values.push(patch.lastError ?? null) }
+  if ("lastOutcome" in patch) { sets.push("last_outcome = ?"); values.push(patch.lastOutcome ?? null) }
+  if ("lastOutcomeAt" in patch) { sets.push("last_outcome_at = ?"); values.push(patch.lastOutcomeAt ?? null) }
   if (sets.length === 0) return getAgent(agentId, db)
   sets.push("updated_at = ?")
   values.push(now())

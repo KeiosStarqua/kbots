@@ -129,6 +129,7 @@ export async function createTaskHandler(params: Record<string, unknown>): Promis
     throw invalidParams("title must be a non-empty string (max 500 chars)")
   }
   const goal = optionalText(params.goal, "goal", 4000)
+  const detail = optionalText(params.detail, "detail", 4000)
   const rawAuto = params.autoDispatch
   let autoDispatch = true
   if (rawAuto !== undefined && rawAuto !== null) {
@@ -137,7 +138,7 @@ export async function createTaskHandler(params: Record<string, unknown>): Promis
   }
 
   const projectId = resolveProjectId(params, true)
-  const task = createTask({ title: rawTitle, projectId, goal: goal ?? null })
+  const task = createTask({ title: rawTitle, projectId, goal: goal ?? null, detail: detail ?? null })
   addEvent(
     "task.created",
     `Task ${task.taskId} created: ${task.title}`,
@@ -263,7 +264,9 @@ export async function tasksBriefHandler(params: Record<string, unknown>): Promis
     decisions: splitLines(brief?.decisions ?? null),
     blockers: splitLines(brief?.blockers ?? null),
     nextStep: brief?.nextStep ?? null,
-    ceo: link.ceo,
+    ceo: link.ceo
+      ? { ...link.ceo, lastOutcome: link.ceo.lastOutcome ?? null, lastOutcomeAt: link.ceo.lastOutcomeAt ?? null }
+      : null,
     workers,
     pendingMessages: link.pendingMessageCount,
   }

@@ -14,6 +14,11 @@ pub fn render(method: &str, value: &Value) -> Option<String> {
         "tasks.create" | "tasks.cancel" => Some(render_task_write(value)),
         "tasks.list" => Some(render_tasks_list(value)),
         "tasks.get" => Some(render_task_get(value)),
+        "tasks.message" => Some(render_task_message(value)),
+        "tasks.messages" => Some(render_task_messages(value)),
+        "tasks.brief" => Some(render_task_brief(value)),
+        "tasks.inbox" => Some(render_tasks_inbox(value)),
+        "tasks.update" => Some(render_task_update(value)),
         "projects.register" => Some(render_project_register(value)),
         "projects.list" => Some(render_projects_list(value)),
         "projects.get" => Some(render_project_get(value)),
@@ -195,6 +200,260 @@ fn render_tasks_list(value: &Value) -> String {
         })
         .collect();
     table(&["ID", "STATUS", "PROJECT", "TITLE"], &rows)
+}
+
+fn truncate_chars(text: &str, max: usize) -> String {
+    if char_width(text) <= max {
+        return text.to_owned();
+    }
+    let keep: String = text.chars().take(max.saturating_sub(1)).collect();
+    format!("{keep}…")
+}
+
+fn lines_or_array(value: Option<&Value>) -> Vec<String> {
+    match value {
+        Some(Value::String(text)) => text
+            .lines()
+            .map(|line| line.trim_end().to_owned())
+            .filter(|line| !line.is_empty())
+            .collect(),
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(Value::as_str)
+            .map(|line| line.trim_end().to_owned())
+            .filter(|line| !line.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn text_or_array(value: Option<&Value>) -> Option<String> {
+    match value {
+        Some(Value::String(text)) if !text.trim().is_empty() => Some(text.clone()),
+        Some(Value::Array(_)) => {
+            let joined = lines_or_array(value).join("\n");
+            if joined.is_empty() {
+                None
+            } else {
+                Some(joined)
+            }
+        }
+        _ => None,
+    }
+}
+
+fn brief_item_detail(item: &Value) -> String {
+    string(item, "detail")
+        .or_else(|| string(item, "operation"))
+        .or_else(|| string(item, "title"))
+        .or_else(|| string(item, "text"))
+        .unwrap_or_default()
+}
+
+fn brief_item_id(item: &Value) -> String {
+    string(item, "taskId")
+        .or_else(|| string(item, "approvalId"))
+        .unwrap_or_else(|| "-".to_owned())
+}
+
+fn render_task_message(value: &Value) -> String {
+    let task_id = string(value, "taskId").unwrap_or_else(|| "?".to_owned());
+    let outcome = string(value, "outcome").unwrap_or_else(|| "?".to_owned());
+    if outcome == "queued" {
+        let message_id = string(value, "messageId").unwrap_or_else(|| "?".to_owned());
+        format!("{task_id}: message queued ({message_id})")
+    } else {
+        format!("{task_id}: message {outcome}")
+    }
+}
+
+fn render_task_messages(value: &Value) -> String {
+    let items = list_items(value);
+    if items.is_empty() {
+        return "(no messages)".to_owned();
+    }
+    items
+        .iter()
+        .map(|message| {
+            let ts = string(message, "ts").unwrap_or_else(|| "-".to_owned());
+            let direction = string(message, "direction").unwrap_or_else(|| "?".to_owned());
+            let status = string(message, "status").unwrap_or_else(|| "?".to_owned());
+            let text = string(message, "text").unwrap_or_default();
+            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            let text = truncate_chars(&text, 120);
+            format!("{ts} {direction} {status} {text}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn render_task_brief_global(value: &Value) -> String {
+    let generated = string(value, "generatedAt").unwrap_or_else(|| "-".to_owned());
+    let total = value
+        .get("counts")
+        .and_then(|counts| counts.get("total"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let needs_action = value
+        .get("needsAction")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let running = value
+        .get("running")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let done = value
+        .get("done")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    let mut lines = vec![format!(
+        "Generated {generated} · {total} tasks · {} need action",
+        needs_action.len()
+    )];
+    if !needs_action.is_empty() {
+        lines.push(format!("{BOLD}Needs action{RESET}"));
+        for item in &needs_action {
+            let kind = string(item, "kind").unwrap_or_else(|| "?".to_owned());
+            lines.push(format!(
+                "{kind} · {} · {}",
+                brief_item_id(item),
+                brief_item_detail(item)
+            ));
+        }
+    }
+    if !running.is_empty() {
+        lines.push(format!("{BOLD}Running{RESET}"));
+        for item in &running {
+            let task_id = brief_item_id(item);
+            let title = string(item, "title").unwrap_or_default();
+            let status = string(item, "status").unwrap_or_else(|| "?".to_owned());
+            lines.push(format!("{task_id} · {title} · {status}"));
+        }
+    }
+    if !done.is_empty() {
+        lines.push(format!("{BOLD}Done{RESET}"));
+        for item in &done {
+            let task_id = brief_item_id(item);
+            let title = string(item, "title").unwrap_or_default();
+            let status = string(item, "status").unwrap_or_else(|| "?".to_owned());
+            lines.push(format!("{task_id} · {title} · {status}"));
+        }
+    }
+    lines.join("\n")
+}
+
+fn render_task_brief_task(value: &Value) -> String {
+    let task_id = string(value, "taskId").unwrap_or_else(|| "?".to_owned());
+    let title = string(value, "title").unwrap_or_default();
+    let status = string(value, "status").unwrap_or_else(|| "?".to_owned());
+    let project = string(value, "projectPath")
+        .or_else(|| string(value, "projectId"))
+        .unwrap_or_else(|| "-".to_owned());
+    let ceo = value
+        .get("ceo")
+        .filter(|ceo| !ceo.is_null())
+        .map(|ceo| {
+            let id = string(ceo, "id").unwrap_or_else(|| "?".to_owned());
+            let role = string(ceo, "role").unwrap_or_else(|| "?".to_owned());
+            let ceo_status = string(ceo, "status").unwrap_or_else(|| "?".to_owned());
+            format!("{id} · {role} · {ceo_status}")
+        })
+        .unwrap_or_else(|| "-".to_owned());
+    let pending = value
+        .get("pendingMessages")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+
+    let mut lines = vec![
+        format!("{BOLD}{task_id} · {title}{RESET}"),
+        format!("status   {status}"),
+        format!("project  {project}"),
+        format!("ceo      {ceo}"),
+        format!("pending  {pending} message(s)"),
+    ];
+
+    if let Some(summary) = text_or_array(value.get("summary")) {
+        lines.push(String::new());
+        lines.push(format!("{BOLD}Summary{RESET}"));
+        lines.push(summary);
+    }
+    let decisions = lines_or_array(value.get("decisions"));
+    if !decisions.is_empty() {
+        lines.push(String::new());
+        lines.push(format!("{BOLD}Decisions{RESET}"));
+        for decision in decisions {
+            lines.push(format!("- {decision}"));
+        }
+    }
+    let blockers = lines_or_array(value.get("blockers"));
+    if !blockers.is_empty() {
+        lines.push(String::new());
+        lines.push(format!("{BOLD}Blockers{RESET}"));
+        for blocker in blockers {
+            lines.push(format!("- {blocker}"));
+        }
+    }
+    if let Some(next_step) = text_or_array(value.get("nextStep")) {
+        lines.push(String::new());
+        lines.push(format!("{BOLD}Next step{RESET}"));
+        lines.push(next_step);
+    }
+    lines.join("\n")
+}
+
+fn render_task_brief(value: &Value) -> String {
+    if value.get("generatedAt").is_some() {
+        render_task_brief_global(value)
+    } else {
+        render_task_brief_task(value)
+    }
+}
+
+fn render_tasks_inbox(value: &Value) -> String {
+    let items = list_items(value);
+    if items.is_empty() {
+        return "Inbox clear.".to_owned();
+    }
+    let mut lines: Vec<String> = Vec::new();
+    for kind in ["approval", "blocked", "failed", "queued", "review"] {
+        let group: Vec<&Value> = items
+            .iter()
+            .filter(|item| string(item, "kind").as_deref() == Some(kind))
+            .collect();
+        if group.is_empty() {
+            continue;
+        }
+        if !lines.is_empty() {
+            lines.push(String::new());
+        }
+        lines.push(format!("== {kind} ({}) ==", group.len()));
+        for item in group {
+            let id = brief_item_id(item);
+            let primary = string(item, "operation")
+                .or_else(|| string(item, "title"))
+                .or_else(|| string(item, "text"))
+                .or_else(|| string(item, "detail"))
+                .unwrap_or_default();
+            let mut line = format!("{id} · {primary}");
+            if let Some(detail) = string(item, "detail") {
+                if detail != primary && !detail.is_empty() {
+                    line.push_str(&format!(" · {detail}"));
+                }
+            }
+            lines.push(line);
+        }
+    }
+    lines.join("\n")
+}
+
+fn render_task_update(value: &Value) -> String {
+    let task_id = string(value, "taskId").unwrap_or_else(|| "?".to_owned());
+    let status = string(value, "status").unwrap_or_else(|| "?".to_owned());
+    format!("{task_id} → {status}")
 }
 
 fn render_task_get(value: &Value) -> String {

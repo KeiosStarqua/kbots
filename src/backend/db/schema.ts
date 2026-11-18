@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 4
+export const SCHEMA_VERSION = 5
 
 // v1 → v2 delta: the managed agent registry. Applied to databases already at
 // user_version 1; fresh databases run SCHEMA_DDL which embeds everything.
@@ -118,6 +118,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_active_project_role
   WHERE status IN ('starting','running','stopping') AND role != 'ceo';
 `
 
+// v4 → v5 delta: additive columns only. No table rebuilds.
+//   agents.last_outcome / last_outcome_at — outcome of the last probed run.
+//   task_messages.attempts — delivery attempts, bounded by the daemon.
+// Fresh SCHEMA_DDL embeds these directly.
+export const V5_DDL = `
+ALTER TABLE agents ADD COLUMN last_outcome TEXT;
+ALTER TABLE agents ADD COLUMN last_outcome_at TEXT;
+ALTER TABLE task_messages ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
+`
+
 export const SCHEMA_DDL = `
 CREATE TABLE IF NOT EXISTS projects(
   id TEXT PRIMARY KEY,
@@ -181,7 +191,9 @@ CREATE TABLE IF NOT EXISTS agents(
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   stopped_at TEXT,
-  last_error TEXT
+  last_error TEXT,
+  last_outcome TEXT,
+  last_outcome_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project_id);
@@ -222,7 +234,8 @@ CREATE TABLE IF NOT EXISTS task_messages(
   direction TEXT NOT NULL CHECK(direction IN ('user','system')),
   text TEXT NOT NULL,
   status TEXT NOT NULL CHECK(status IN ('queued','delivered','canceled')),
-  delivered_at TEXT
+  delivered_at TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_task_messages_task ON task_messages(task_id, status);
 

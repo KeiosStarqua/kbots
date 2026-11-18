@@ -79,6 +79,12 @@ enum TaskCommands {
         /// Project identifier or path.
         #[arg(long, short = 'p')]
         project: Option<String>,
+        /// Expanded goal given to the CEO's first prompt.
+        #[arg(long)]
+        goal: Option<String>,
+        /// Extra context; shown to the CEO.
+        #[arg(long)]
+        detail: Option<String>,
     },
     /// List tasks, optionally filtered by project.
     #[command(visible_alias = "ls")]
@@ -90,6 +96,24 @@ enum TaskCommands {
     Show { task_id: String },
     /// Cancel one task.
     Cancel { task_id: String },
+    /// Send a message to a task.
+    Message { task_id: String, text: String },
+    /// List messages for a task, newest last.
+    Messages { task_id: String },
+    /// Print the global brief, or one task's brief when TASK_ID is given.
+    Brief { task_id: Option<String> },
+    /// Show items that need action, grouped by kind.
+    Inbox,
+    /// Update a task's status (review, blocked, done, failed, or canceled).
+    Update {
+        task_id: String,
+        /// New status; validated by the daemon.
+        #[arg(long)]
+        status: String,
+        /// Note recorded with the status change.
+        #[arg(long)]
+        note: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -252,13 +276,47 @@ fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> 
     let request = match command {
         Commands::Status => ("system.status", json!({})),
         Commands::Tasks { command } => match command {
-            TaskCommands::Add { title, project } => (
-                "tasks.create",
-                json!({ "title": title, "project": project }),
-            ),
+            TaskCommands::Add {
+                title,
+                project,
+                goal,
+                detail,
+            } => {
+                let mut params = json!({ "title": title, "project": project });
+                if let Some(goal) = goal.filter(|text| !text.trim().is_empty()) {
+                    params["goal"] = json!(goal);
+                }
+                if let Some(detail) = detail.filter(|text| !text.trim().is_empty()) {
+                    params["detail"] = json!(detail);
+                }
+                ("tasks.create", params)
+            }
             TaskCommands::List { project } => ("tasks.list", json!({ "project": project })),
             TaskCommands::Show { task_id } => ("tasks.get", json!({ "taskId": task_id })),
             TaskCommands::Cancel { task_id } => ("tasks.cancel", json!({ "taskId": task_id })),
+            TaskCommands::Message { task_id, text } => (
+                "tasks.message",
+                json!({ "taskId": task_id, "text": text }),
+            ),
+            TaskCommands::Messages { task_id } => {
+                ("tasks.messages", json!({ "taskId": task_id }))
+            }
+            TaskCommands::Brief { task_id } => match task_id {
+                Some(task_id) => ("tasks.brief", json!({ "taskId": task_id })),
+                None => ("tasks.brief", json!({})),
+            },
+            TaskCommands::Inbox => ("tasks.inbox", json!({})),
+            TaskCommands::Update {
+                task_id,
+                status,
+                note,
+            } => {
+                let mut params = json!({ "taskId": task_id, "status": status });
+                if let Some(note) = note.filter(|text| !text.trim().is_empty()) {
+                    params["note"] = json!(note);
+                }
+                ("tasks.update", params)
+            }
         },
         Commands::Agents { command } => match command {
             AgentCommands::List { project } => ("agents.list", json!({ "project": project })),

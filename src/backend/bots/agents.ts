@@ -31,6 +31,9 @@ import {
   listQueuedMessagesForTask,
   listTasksWithQueuedMessages,
   markMessageDelivered,
+  incrementMessageAttempts,
+  abandonQueuedMessage,
+  MESSAGE_ATTEMPT_LIMIT,
   updateAgent,
   type AgentRow,
   type AgentRole,
@@ -52,6 +55,7 @@ import {
 import { makeOpencodeClient } from "./opencode.ts"
 
 const MANAGED_ROLES: readonly AgentRole[] = ["ceo", "git", "ops"]
+const START_TIMEOUT_MS = 5 * 60 * 1000
 
 function roleParam(raw: unknown): AgentRole {
   const value = typeof raw === "string" ? raw.trim().toLowerCase() : ""
@@ -143,6 +147,36 @@ function managedPayload(
   }
 }
 
+/** Format a session time value (DateTimeUtc/ISO string/epoch) as ISO; undefined when absent/unreadable. */
+function isoTime(value: unknown): string | undefined {
+  if (value === null || value === undefined) return undefined
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? undefined : value.toISOString()
+  if (typeof value === "string") return value.length > 0 ? value : undefined
+  const epoch = typeof value === "number" ? value : undefined
+  if (epoch !== undefined && Number.isFinite(epoch)) return new Date(epoch).toISOString()
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>
+    const toDate = record.toDate
+    if (typeof toDate === "function") {
+      try {
+        const date = (toDate as () => Date).call(value)
+        return date instanceof Date && !Number.isNaN(date.getTime()) ? date.toISOString() : undefined
+      } catch {
+        return undefined
+      }
+    }
+    const millis = typeof record.epochMillis === "number" ? record.epochMillis
+      : typeof record.millis === "number" ? record.millis
+      : undefined
+    if (millis !== undefined && Number.isFinite(millis)) return new Date(millis).toISOString()
+  }
+  return undefined
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined
+}
+
 /** Probe the runtime backing an agent; never throws. */
 export async function probeAgent(agent: AgentRow): Promise<Record<string, unknown> | null> {
   try {
@@ -161,11 +195,31 @@ export async function probeAgent(agent: AgentRow): Promise<Record<string, unknow
     if (!agent.sessionId) return { outcome: "missing" }
     const { client } = await makeOpencodeClient()
     const session = await client.session.get({ sessionID: agent.sessionId })
-    const outcome =
-      session && typeof session === "object" && "outcome" in session
-        ? (session as { outcome?: unknown }).outcome
-        : undefined
-    return { outcome: typeof outcome === "string" ? outcome : "unknown" }
+    const sessionRecord =
+      session && typeof session === "object" ? (session as Record<string, unknown>) : null
+    const outcome = sessionRecord && "outcome" in sessionRecord ? sessionRecord.outcome : undefined
+    const result: Record<string, unknown> = {
+      outcome: typeof outcome === "string" ? outcome : "unknown",
+    }
+    const tokens =
+      sessionRecord && typeof sessionRecord.tokens === "object" && sessionRecord.tokens !== null
+        ? (sessionRecord.tokens as Record<string, unknown>)
+        : null
+    if (tokens) {
+      result.tokens = {
+        input: numberOrUndefined(tokens.input) ?? 0,
+        output: numberOrUndefined(tokens.output) ?? 0,
+      }
+    }
+    const time =
+      sessionRecord && typeof sessionRecord.time === "object" && sessionRecord.time !== null
+        ? (sessionRecord.time as Record<string, unknown>)
+        : null
+    const updatedAt = isoTime(time?.updated)
+    const idleAt = isoTime(time?.idle)
+    if (updatedAt !== undefined) result.updatedAt = updatedAt
+    if (idleAt !== undefined) result.idleAt = idleAt
+    return result
   } catch {
     return null
   }
@@ -537,12 +591,26 @@ export async function reconcileAgents(): Promise<{ checked: number; changed: num
           changed += 1
           continue
         }
-        const { client } = await makeOpencodeClient()
-        try {
-          await client.session.get({ sessionID: agent.sessionId })
-          if (agent.status !== "running") updateAgent(agent.id, { status: "running" })
-        } catch {
-          updateAgent(agent.id, { status: "error", lastError: "session unreachable" })
+        // Crash between dispatch phases: still `starting` long after the RPC
+        // should have moved the row to running. The dispatcher normally does
+        // this in-process, so this only fires on a daemon restart/crash.
+        if (agent.status === "starting" && Date.now() - Date.parse(agent.updatedAt) > START_TIMEOUT_MS) {
+          updateAgent(agent.id, { status: "error", lastError: "session timed out before first run" })
+          addEvent("agent.start_timeout", `Agent ${agent.id} session timed out before first run`, { agentId: agent.id, ...(ceoTaskId ? { taskId: ceoTaskId } : {}) })
+          changed += 1
+          continue
+        }
+        const probe = await probeAgent(agent)
+        const probedAt = new Date().toISOString()
+        if (probe) {
+          const outcome = typeof probe.outcome === "string" ? probe.outcome : "unknown"
+          updateAgent(agent.id, {
+            lastOutcome: outcome,
+            lastOutcomeAt: probedAt,
+            ...(agent.status !== "running" ? { status: "running" } : {}),
+          })
+        } else {
+          updateAgent(agent.id, { status: "error", lastError: "session unreachable", lastOutcome: "unreachable", lastOutcomeAt: probedAt })
           addEvent("bot.reconcile", `Agent ${agent.id} session unreachable`, { agentId: agent.id, ...(ceoTaskId ? { taskId: ceoTaskId } : {}) })
           changed += 1
         }
@@ -562,9 +630,15 @@ export async function reconcileAgents(): Promise<{ checked: number; changed: num
       const ceo = getTaskCeoAgent(task.taskId)
       if (!ceo || ceo.status !== "running") continue
       for (const message of listQueuedMessagesForTask(task.taskId)) {
+        if (message.attempts >= MESSAGE_ATTEMPT_LIMIT) {
+          abandonQueuedMessage(message)
+          continue
+        }
+        const attempted = incrementMessageAttempts(message.id) ?? { ...message, attempts: message.attempts + 1 }
         try {
           await promptAgentCore(ceo, message.text)
         } catch {
+          if (attempted.attempts >= MESSAGE_ATTEMPT_LIMIT) abandonQueuedMessage(attempted)
           break // busy/blocked/unreachable — keep the message queued, keep order
         }
         markMessageDelivered(message.id)

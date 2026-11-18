@@ -23,7 +23,7 @@ use ratatui::{
 
 use rpc::{
     AgentsList, Approval, EventItem, InboxItem, RpcClient, RpcError, SystemStatus, Task,
-    brief_entry_line, truncate_chars,
+    TaskBrief, TaskMessage, brief_entry_line, truncate_chars,
 };
 
 const NAVIGATION: [&str; 6] = [
@@ -59,6 +59,11 @@ enum BgResult {
     TaskCreated(Result<rpc::TaskCreateResult, RpcError>),
     TaskMessaged(Result<rpc::TaskMessageResult, RpcError>),
     TaskUpdated(Result<rpc::TaskUpdateResult, RpcError>),
+    TaskDetail {
+        task_id: String,
+        brief: Result<TaskBrief, RpcError>,
+        messages: Result<Vec<TaskMessage>, RpcError>,
+    },
 }
 
 fn fetch_snapshot(client: &RpcClient) -> Snapshot {
@@ -110,7 +115,8 @@ enum OverlayState<T> {
 
 enum Overlay {
     Brief { state: OverlayState<BriefView> },
-    Inbox { state: OverlayState<Vec<InboxItem>> },
+    Inbox { state: OverlayState<Vec<InboxItem>>, selected: usize },
+    TaskDetail { state: OverlayState<TaskDetailView>, task_id: String },
 }
 
 impl Overlay {
@@ -118,8 +124,34 @@ impl Overlay {
         match self {
             Overlay::Brief { .. } => " /brief ",
             Overlay::Inbox { .. } => " /inbox ",
+            Overlay::TaskDetail { .. } => " /task ",
         }
     }
+
+    fn hint(&self) -> &'static str {
+        match self {
+            Overlay::Brief { .. } => "j/k scroll · Esc close",
+            Overlay::Inbox { .. } => "n/p move · Enter open · Esc close",
+            Overlay::TaskDetail { .. } => "Esc close · d done · b blocked · n message · j/k scroll",
+        }
+    }
+}
+
+/// Everything the task detail overlay renders; per-section errors are kept
+/// inline so a half-updated daemon never blanks the whole view.
+struct TaskDetailView {
+    title: String,
+    status: String,
+    project: String,
+    summary: Option<String>,
+    decisions: Vec<String>,
+    blockers: Vec<String>,
+    next_step: Option<String>,
+    ceo: Option<rpc::TaskBriefCeo>,
+    pending_messages: Option<u64>,
+    messages: Vec<TaskMessage>, // newest first, at most 4
+    brief_error: Option<String>,
+    messages_error: Option<String>,
 }
 
 struct App {
@@ -283,14 +315,43 @@ impl App {
             BgResult::Inbox(result) => {
                 let state = match result {
                     Ok(items) => {
-                        self.inbox_items = items.clone();
+                        let ordered = inbox_display_items(&items);
+                        self.inbox_items = ordered.clone();
                         self.inbox_supported = true;
-                        OverlayState::Ready(items)
+                        OverlayState::Ready(ordered)
                     }
                     Err(error) => OverlayState::Failed(brief_error(&error)),
                 };
-                self.overlay = Some(Overlay::Inbox { state });
+                self.overlay = Some(Overlay::Inbox { state, selected: 0 });
                 self.overlay_scroll = 0;
+            }
+            BgResult::TaskDetail {
+                task_id,
+                brief,
+                messages,
+            } => {
+                let still_open = matches!(
+                    &self.overlay,
+                    Some(Overlay::TaskDetail { task_id: open, .. }) if *open == task_id
+                );
+                if still_open {
+                    let project = self
+                        .tasks
+                        .iter()
+                        .find(|task| task.task_id == task_id)
+                        .map(Task::project_label);
+                    let task_title = self
+                        .tasks
+                        .iter()
+                        .find(|task| task.task_id == task_id)
+                        .map(|task| task.title.clone());
+                    let view = build_task_detail(task_id.clone(), brief, messages, project, task_title);
+                    self.overlay = Some(Overlay::TaskDetail {
+                        state: OverlayState::Ready(view),
+                        task_id,
+                    });
+                    self.overlay_scroll = 0;
+                }
             }
             BgResult::TaskCreated(result) => {
                 let note = match result {
@@ -400,8 +461,18 @@ impl App {
         }
         match snapshot.inbox {
             Ok(items) => {
-                self.inbox_items = items;
+                self.inbox_items = inbox_display_items(&items);
                 self.inbox_supported = true;
+                // Keep an open inbox overlay's selection valid.
+                if let Some(Overlay::Inbox {
+                    state: OverlayState::Ready(items),
+                    selected,
+                }) = &mut self.overlay
+                {
+                    if !items.is_empty() && *selected >= items.len() {
+                        *selected = items.len() - 1;
+                    }
+                }
             }
             Err(error) => {
                 if error.is_method_not_found() {
@@ -533,6 +604,7 @@ impl App {
             "inbox" => {
                 self.overlay = Some(Overlay::Inbox {
                     state: OverlayState::Loading,
+                    selected: 0,
                 });
                 self.overlay_scroll = 0;
                 self.spawn_bg(|client| BgResult::Inbox(client.tasks_inbox()));
@@ -559,7 +631,7 @@ impl App {
                 Some(task_id) => {
                     self.composer_note = Some((format!("marking {task_id} {status}…"), false));
                     self.spawn_bg(move |client| {
-                        BgResult::TaskUpdated(client.tasks_update(&task_id, status))
+                        BgResult::TaskUpdated(client.tasks_update(&task_id, status, None))
                     });
                 }
                 None => {
@@ -575,6 +647,92 @@ impl App {
         }
     }
 
+
+    // -- overlays: selection + task detail -----------------------------------
+
+    fn overlay_task_id(&self) -> Option<String> {
+        match &self.overlay {
+            Some(Overlay::TaskDetail { task_id, .. }) => Some(task_id.clone()),
+            _ => None,
+        }
+    }
+
+    fn move_inbox_selection(&mut self, delta: isize) {
+        if let Some(Overlay::Inbox {
+            state: OverlayState::Ready(items),
+            selected,
+        }) = &mut self.overlay
+        {
+            if items.is_empty() {
+                *selected = 0;
+                return;
+            }
+            let max = items.len() - 1;
+            let next = (*selected as isize + delta).clamp(0, max as isize);
+            *selected = next as usize;
+        }
+    }
+
+    fn activate_inbox_selection(&mut self) {
+        let task_id = match &self.overlay {
+            Some(Overlay::Inbox {
+                state: OverlayState::Ready(items),
+                selected,
+            }) => items.get(*selected).and_then(|item| item.task_id.clone()),
+            _ => return,
+        };
+        match task_id {
+            Some(task_id) => self.open_task_detail(task_id),
+            None => {
+                // Pure approvals carry no taskId: jump to the Approvals section.
+                self.overlay = None;
+                self.overlay_scroll = 0;
+                self.selected = 4;
+            }
+        }
+    }
+
+    fn open_task_detail(&mut self, task_id: String) {
+        self.overlay = Some(Overlay::TaskDetail {
+            state: OverlayState::Loading,
+            task_id: task_id.clone(),
+        });
+        self.overlay_scroll = 0;
+        self.spawn_bg(move |client| {
+            let brief = client.tasks_brief_task(&task_id);
+            let messages = client.tasks_messages(&task_id);
+            BgResult::TaskDetail {
+                task_id,
+                brief,
+                messages,
+            }
+        });
+    }
+
+    /// `d`/`b` in the detail overlay: explicit operator control with a note;
+    /// refreshes via the same path as every tasks.update from the UI.
+    fn detail_mark(&mut self, task_id: &str, status: &'static str, note: &'static str) {
+        self.composer_note = Some((format!("marking {task_id} {status}…"), false));
+        let update_id = task_id.to_string();
+        self.spawn_bg(move |client| {
+            BgResult::TaskUpdated(client.tasks_update(&update_id, status, Some(note)))
+        });
+        // Re-load the detail view so title/status/brief reflect the transition.
+        self.open_task_detail(task_id.to_string());
+    }
+
+    fn prefill_composer_for_task(&mut self, task_id: &str) {
+        let text = match self.tasks.iter().position(|task| task.task_id == task_id) {
+            Some(index) => format!("@{} ", index + 1),
+            None => "@".to_string(),
+        };
+        self.overlay = None;
+        self.overlay_scroll = 0;
+        self.composer_text = text;
+        self.composer_focused = true;
+        self.composer_note = None;
+    }
+
     // -- key handling --------------------------------------------------------
 
     fn handle_key(&mut self, key: KeyEvent) -> bool {
@@ -583,10 +741,40 @@ impl App {
 
         // Overlays consume everything until closed.
         if self.overlay.is_some() {
+            let overlay_kind = match &self.overlay {
+                Some(Overlay::Brief { .. }) => 0,
+                Some(Overlay::Inbox { .. }) => 1,
+                Some(Overlay::TaskDetail { .. }) => 2,
+                None => unreachable!(),
+            };
             match code {
                 KeyCode::Esc | KeyCode::Char('q') => {
                     self.overlay = None;
                     self.overlay_scroll = 0;
+                }
+                // Inbox: n/p (or arrows / j/k) move the selection, Enter acts.
+                KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('p') if overlay_kind == 1 => {
+                    self.move_inbox_selection(-1);
+                }
+                KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('n') if overlay_kind == 1 => {
+                    self.move_inbox_selection(1);
+                }
+                KeyCode::Enter if overlay_kind == 1 => self.activate_inbox_selection(),
+                // Task detail actions.
+                KeyCode::Char('n') if overlay_kind == 2 => {
+                    if let Some(task_id) = self.overlay_task_id() {
+                        self.prefill_composer_for_task(&task_id);
+                    }
+                }
+                KeyCode::Char('d') if overlay_kind == 2 => {
+                    if let Some(task_id) = self.overlay_task_id() {
+                        self.detail_mark(&task_id, "done", "marked done from TUI");
+                    }
+                }
+                KeyCode::Char('b') if overlay_kind == 2 => {
+                    if let Some(task_id) = self.overlay_task_id() {
+                        self.detail_mark(&task_id, "blocked", "marked blocked from TUI");
+                    }
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
                     self.overlay_scroll = self.overlay_scroll.saturating_sub(1);
@@ -737,6 +925,95 @@ fn brief_error(error: &RpcError) -> String {
     }
 }
 
+/// Inbox items render grouped by kind; reorder once at apply time so the
+/// overlay, the badge and Enter-to-act all share one ordering.
+fn inbox_display_items(items: &[InboxItem]) -> Vec<InboxItem> {
+    let mut ordered = Vec::with_capacity(items.len());
+    for kind in INBOX_KIND_ORDER {
+        ordered.extend(items.iter().filter(|item| item.kind == kind).cloned());
+    }
+    ordered.extend(
+        items
+            .iter()
+            .filter(|item| !INBOX_KIND_ORDER.contains(&item.kind.as_str()))
+            .cloned(),
+    );
+    ordered
+}
+
+fn build_task_detail(
+    task_id: String,
+    brief: Result<TaskBrief, RpcError>,
+    messages: Result<Vec<TaskMessage>, RpcError>,
+    project: Option<String>,
+    task_title: Option<String>,
+) -> TaskDetailView {
+    let mut view = TaskDetailView {
+        title: task_title.unwrap_or_else(|| task_id.clone()),
+        status: String::new(),
+        project: project.unwrap_or_else(|| "—".to_string()),
+        summary: None,
+        decisions: Vec::new(),
+        blockers: Vec::new(),
+        next_step: None,
+        ceo: None,
+        pending_messages: None,
+        messages: Vec::new(),
+        brief_error: None,
+        messages_error: None,
+    };
+    match brief {
+        Ok(brief) => {
+            if !brief.title.is_empty() {
+                view.title = brief.title;
+            }
+            view.status = brief.status;
+            view.summary = brief.summary;
+            view.decisions = brief.decisions;
+            view.blockers = brief.blockers;
+            view.next_step = brief.next_step;
+            view.ceo = brief.ceo;
+            view.pending_messages = brief.pending_messages;
+        }
+        Err(error) => view.brief_error = Some(brief_error(&error)),
+    }
+    match messages {
+        Ok(mut items) => {
+            items.reverse(); // daemon sends ts ASC; show newest first
+            items.truncate(4);
+            view.messages = items;
+        }
+        Err(error) => view.messages_error = Some(brief_error(&error)),
+    }
+    view
+}
+
+/// Greedy word-wrap; `width` is the usable inner width in columns.
+fn wrap_text(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(8);
+    let mut out = Vec::new();
+    for raw in text.lines() {
+        let mut current = String::new();
+        for word in raw.split_whitespace() {
+            if current.is_empty() {
+                current.push_str(word);
+            } else if current.chars().count() + 1 + word.chars().count() <= width {
+                current.push(' ');
+                current.push_str(word);
+            } else {
+                out.push(std::mem::take(&mut current));
+                current.push_str(word);
+            }
+        }
+        if !current.is_empty() {
+            out.push(current);
+        } else if raw.trim().is_empty() {
+            out.push(String::new());
+        }
+    }
+    out
+}
+
 fn humanize_elapsed(elapsed: Duration) -> String {
     let seconds = elapsed.as_secs();
     if seconds < 60 {
@@ -865,8 +1142,8 @@ fn render(frame: &mut Frame, app: &App) {
     }
     render_footer(frame, sections[index], app);
 
-    if let Some(overlay) = &app.overlay {
-        render_overlay(frame, area, overlay, app.overlay_scroll, app.refreshing);
+    if app.overlay.is_some() {
+        render_overlay(frame, area, app);
     }
 }
 
@@ -2009,30 +2286,10 @@ fn overlay_area(area: Rect) -> Rect {
     }
 }
 
-fn render_overlay(frame: &mut Frame, area: Rect, overlay: &Overlay, scroll: usize, refreshing: bool) {
+fn render_overlay(frame: &mut Frame, area: Rect, app: &App) {
+    let Some(overlay) = &app.overlay else { return };
     let popup = overlay_area(area);
     frame.render_widget(Clear, popup);
-
-    let lines: Vec<Line> = match overlay {
-        Overlay::Brief { state } => match state {
-            OverlayState::Loading => vec![loading_line("loading brief", refreshing)],
-            OverlayState::Failed(error) => failed_lines(error),
-            OverlayState::Ready(brief) => brief_lines(brief),
-        },
-        Overlay::Inbox { state } => match state {
-            OverlayState::Loading => vec![loading_line("loading inbox", refreshing)],
-            OverlayState::Failed(error) => failed_lines(error),
-            OverlayState::Ready(items) => inbox_lines(items),
-        },
-    };
-
-    let hint = Line::from(Span::styled(
-        "j/k scroll · Esc close",
-        Style::default().fg(Color::DarkGray),
-    ));
-    let body = popup.height.saturating_sub(2).max(1) as usize;
-    // Reserve the last row for the hint when content overflows.
-    let content_rows = if lines.len() > body { body.saturating_sub(1).max(1) } else { body };
 
     let block = Block::default()
         .title(overlay.title())
@@ -2045,17 +2302,56 @@ fn render_overlay(frame: &mut Frame, area: Rect, overlay: &Overlay, scroll: usiz
         width: popup.width.saturating_sub(2),
         height: popup.height.saturating_sub(2),
     };
-    let start = if lines.len() > content_rows {
-        scroll.min(lines.len().saturating_sub(content_rows))
-    } else {
-        0
+
+    let mut selected_line: Option<usize> = None;
+    let lines: Vec<Line> = match overlay {
+        Overlay::Brief { state } => match state {
+            OverlayState::Loading => vec![loading_line("loading brief", app.refreshing)],
+            OverlayState::Failed(error) => failed_lines(error),
+            OverlayState::Ready(brief) => brief_lines(brief),
+        },
+        Overlay::Inbox { state, selected } => match state {
+            OverlayState::Loading => vec![loading_line("loading inbox", app.refreshing)],
+            OverlayState::Failed(error) => failed_lines(error),
+            OverlayState::Ready(items) => {
+                let (lines, line) = inbox_lines(items, *selected);
+                selected_line = Some(line);
+                lines
+            }
+        },
+        Overlay::TaskDetail { state, .. } => match state {
+            OverlayState::Loading => vec![loading_line("loading task", app.refreshing)],
+            OverlayState::Failed(error) => failed_lines(error),
+            OverlayState::Ready(view) => detail_lines(view, inner.width as usize),
+        },
     };
-    let mut all: Vec<Line> = lines
-        .into_iter()
-        .skip(start)
-        .take(content_rows)
-        .collect();
-    all.push(hint);
+
+    let body = inner.height.max(1) as usize;
+    // Reserve a hint row only when the content overflows.
+    let content_rows = if lines.len() >= body {
+        body.saturating_sub(1).max(1)
+    } else {
+        body
+    };
+    let mut start = 0usize;
+    if lines.len() > content_rows {
+        match selected_line {
+            Some(selected) => {
+                if selected >= content_rows {
+                    start = selected + 1 - content_rows;
+                }
+            }
+            None => {
+                start = app.overlay_scroll.min(lines.len() - content_rows);
+            }
+        }
+    }
+
+    let mut all: Vec<Line> = lines.into_iter().skip(start).take(content_rows).collect();
+    all.push(Line::from(Span::styled(
+        overlay.hint(),
+        Style::default().fg(Color::DarkGray),
+    )));
     frame.render_widget(Paragraph::new(all), inner);
 }
 
@@ -2127,49 +2423,248 @@ fn push_brief_section(lines: &mut Vec<Line<'static>>, label: &str, items: &[Stri
     lines.push(Line::default());
 }
 
-fn inbox_lines(items: &[InboxItem]) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
+/// Renders the display-ordered inbox items with group headers; returns the
+/// lines plus the line index of the selected row so the window can follow it.
+fn inbox_lines(items: &[InboxItem], selected: usize) -> (Vec<Line<'static>>, usize) {
     if items.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "inbox zero — nothing needs you right now ✓",
-            Style::default().fg(Color::LightGreen),
-        )));
-        return lines;
+        return (
+            vec![Line::from(Span::styled(
+                "inbox zero — nothing needs you right now ✓",
+                Style::default().fg(Color::LightGreen),
+            ))],
+            0,
+        );
     }
 
-    // Group by kind: known kinds in fixed order, then any unknown kinds.
-    let mut kinds: Vec<String> = INBOX_KIND_ORDER.iter().map(|k| k.to_string()).collect();
-    for item in items {
-        if !kinds.iter().any(|kind| kind == &item.kind) {
-            kinds.push(item.kind.clone());
-        }
-    }
-
-    for kind in kinds {
-        let group: Vec<&InboxItem> = items.iter().filter(|item| item.kind == kind).collect();
-        if group.is_empty() {
-            continue;
-        }
-        let accent = inbox_kind_style(&kind);
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("{}  ({})", kind.to_uppercase(), group.len()),
+    let mut lines = Vec::new();
+    let mut selected_line = 0usize;
+    let mut current_kind: Option<&str> = None;
+    for (index, item) in items.iter().enumerate() {
+        if current_kind != Some(item.kind.as_str()) {
+            current_kind = Some(item.kind.as_str());
+            let count = items.iter().filter(|other| other.kind == item.kind).count();
+            let accent = inbox_kind_style(&item.kind);
+            lines.push(Line::from(Span::styled(
+                format!("{}  ({})", item.kind.to_uppercase(), count),
                 Style::default().fg(accent).bold(),
+            )));
+        }
+        let is_selected = index == selected;
+        if is_selected {
+            selected_line = lines.len();
+        }
+        let task = item.task_id.clone().unwrap_or_else(|| "—".to_string());
+        let mut spans = vec![
+            Span::styled(
+                if is_selected { "› " } else { "  " },
+                Style::default().fg(Color::LightGreen).bold(),
             ),
+            Span::styled(
+                format!("{:<10} ", truncate_chars(&task, 9)),
+                Style::default().fg(Color::Cyan).bold(),
+            ),
+            Span::raw(truncate_chars(&item.summary(), 110)),
+        ];
+        if !item.task_id.is_some() {
+            spans.push(Span::styled(
+                "  approvals → Enter jumps to section 5",
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
+        let line = Line::from(spans);
+        if is_selected {
+            lines.push(
+                line.style(Style::default().bg(Color::Rgb(35, 49, 40)).add_modifier(Modifier::BOLD)),
+            );
+        } else {
+            lines.push(line);
+        }
+    }
+    (lines, selected_line)
+}
+
+/// Task detail view: brief sections and the last few messages, with
+/// per-section inline errors instead of an all-or-nothing failure.
+fn detail_lines(view: &TaskDetailView, width: usize) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
+    let mut title_spans = vec![Span::styled(
+        truncate_chars(&view.title, 64),
+        Style::default().fg(Color::White).bold(),
+    )];
+    if !view.status.is_empty() {
+        title_spans.push(Span::raw("   "));
+        title_spans.push(Span::styled(
+            view.status.clone(),
+            task_status_style(&view.status),
+        ));
+    }
+    lines.push(Line::from(title_spans));
+    lines.push(Line::from(vec![
+        Span::styled("project  ", Style::default().fg(Color::DarkGray)),
+        Span::styled(view.project.clone(), Style::default().fg(Color::Magenta)),
+    ]));
+
+    // CEO line: id · mode · status, plus lastOutcome if the daemon reports it.
+    match &view.ceo {
+        Some(ceo) => {
+            let mut spans = vec![
+                Span::styled("CEO  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    truncate_chars(&ceo.id, 20),
+                    Style::default().fg(Color::Cyan).bold(),
+                ),
+            ];
+            if let Some(mode) = &ceo.mode {
+                spans.push(Span::raw(" · "));
+                spans.push(Span::raw(mode.clone()));
+            }
+            if let Some(status) = &ceo.status {
+                spans.push(Span::raw(" · "));
+                spans.push(Span::styled(status.clone(), agent_status_style(status)));
+            }
+            lines.push(Line::from(spans));
+            if let Some(outcome) = &ceo.last_outcome {
+                let mut outcome_spans = vec![
+                    Span::styled("     lastOutcome  ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(truncate_chars(outcome, 80), Style::default().fg(Color::White)),
+                ];
+                if let Some(at) = &ceo.last_outcome_at {
+                    outcome_spans.push(Span::styled(
+                        format!(" · {}", hhmmss(at)),
+                        Style::default().fg(Color::DarkGray),
+                    ));
+                }
+                lines.push(Line::from(outcome_spans));
+            }
+        }
+        None => lines.push(Line::from(Span::styled(
+            "CEO  none bound",
+            Style::default().fg(Color::DarkGray),
+        ))),
+    }
+    if let Some(count) = view.pending_messages {
+        lines.push(Line::from(Span::styled(
+            format!("queued messages to CEO: {count}"),
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    lines.push(Line::default());
+
+    if let Some(error) = &view.brief_error {
+        lines.push(Line::from(vec![
+            Span::styled("brief unavailable: ", Style::default().fg(Color::Red).bold()),
+            Span::styled(error.clone(), Style::default().fg(Color::Yellow)),
         ]));
-        for item in group {
-            let task = item.task_id.clone().unwrap_or_else(|| "—".to_string());
+    } else {
+        if let Some(summary) = &view.summary {
+            lines.push(Line::from(Span::styled(
+                "SUMMARY",
+                Style::default().fg(Color::Gray).bold(),
+            )));
+            for line in wrap_text(summary, width.saturating_sub(2)) {
+                lines.push(Line::from(format!("  {line}")));
+            }
+            lines.push(Line::default());
+        }
+        push_detail_list(&mut lines, "DECISIONS", &view.decisions, Color::LightGreen, width);
+        push_detail_list(&mut lines, "BLOCKERS", &view.blockers, Color::Red, width);
+        if let Some(next) = &view.next_step {
+            lines.push(Line::from(Span::styled(
+                "NEXT STEP",
+                Style::default().fg(Color::Yellow).bold(),
+            )));
+            for line in wrap_text(next, width.saturating_sub(2)) {
+                lines.push(Line::from(format!("  {line}")));
+            }
+            lines.push(Line::default());
+        }
+        if view.summary.is_none()
+            && view.decisions.is_empty()
+            && view.blockers.is_empty()
+            && view.next_step.is_none()
+        {
+            lines.push(Line::from(Span::styled(
+                "no brief recorded yet",
+                Style::default().fg(Color::DarkGray),
+            )));
+            lines.push(Line::default());
+        }
+    }
+
+    lines.push(Line::from(Span::styled(
+        "MESSAGES · newest first",
+        Style::default().fg(Color::Gray).bold(),
+    )));
+    if let Some(error) = &view.messages_error {
+        lines.push(Line::from(vec![
+            Span::styled("  messages unavailable: ", Style::default().fg(Color::Red).bold()),
+            Span::styled(error.clone(), Style::default().fg(Color::Yellow)),
+        ]));
+    } else if view.messages.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  — no messages yet",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        for message in &view.messages {
+            let direction_style = match message.direction.as_str() {
+                "user" => Style::default().fg(Color::Cyan),
+                "system" => Style::default().fg(Color::Magenta),
+                _ => Style::default().fg(Color::Gray),
+            };
+            let message_status_style = match message.status.as_str() {
+                "delivered" => Style::default().fg(Color::LightGreen),
+                "queued" => Style::default().fg(Color::Yellow),
+                "canceled" => Style::default().fg(Color::DarkGray),
+                _ => Style::default().fg(Color::Gray),
+            };
             lines.push(Line::from(vec![
                 Span::styled(
-                    format!("  {:<10} ", truncate_chars(&task, 9)),
-                    Style::default().fg(Color::Cyan),
+                    hhmmss(&message.ts).to_string(),
+                    Style::default().fg(Color::DarkGray),
                 ),
-                Span::raw(item.summary()),
+                Span::raw("  "),
+                Span::styled(
+                    format!("{:<7} ", truncate_chars(&message.direction, 6)),
+                    direction_style,
+                ),
+                Span::styled(
+                    format!("{:<10} ", truncate_chars(&message.status, 9)),
+                    message_status_style,
+                ),
+                Span::raw(truncate_chars(&message.text, 100)),
             ]));
         }
-        lines.push(Line::default());
     }
     lines
+}
+
+fn push_detail_list(
+    lines: &mut Vec<Line<'static>>,
+    label: &str,
+    items: &[String],
+    accent: Color,
+    width: usize,
+) {
+    lines.push(Line::from(Span::styled(
+        label.to_string(),
+        Style::default().fg(accent).bold(),
+    )));
+    if items.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  —",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        for item in items {
+            for (index, line) in wrap_text(item, width.saturating_sub(4)).into_iter().enumerate() {
+                let prefix = if index == 0 { "  • " } else { "    " };
+                lines.push(Line::from(format!("{prefix}{line}")));
+            }
+        }
+    }
+    lines.push(Line::default());
 }
 
 fn inbox_kind_style(kind: &str) -> Color {

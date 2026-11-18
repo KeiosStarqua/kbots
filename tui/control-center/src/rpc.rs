@@ -189,11 +189,34 @@ impl RpcClient {
         )
     }
 
-    pub fn tasks_update(&self, task_id: &str, status: &str) -> Result<TaskUpdateResult, RpcError> {
-        self.call_typed(
-            "tasks.update",
-            json!({ "taskId": task_id, "status": status }),
-        )
+    pub fn tasks_update(
+        &self,
+        task_id: &str,
+        status: &str,
+        note: Option<&str>,
+    ) -> Result<TaskUpdateResult, RpcError> {
+        let mut params = json!({ "taskId": task_id, "status": status });
+        if let Some(note) = note {
+            params["note"] = json!(note);
+        }
+        self.call_typed("tasks.update", params)
+    }
+
+    /// Detail brief for a single task (`tasks.brief` with `taskId`).
+    pub fn tasks_brief_task(&self, task_id: &str) -> Result<TaskBrief, RpcError> {
+        self.call_typed("tasks.brief", json!({ "taskId": task_id }))
+    }
+
+    /// Queued/delivered message backlog for a task (`tasks.messages`).
+    pub fn tasks_messages(&self, task_id: &str) -> Result<Vec<TaskMessage>, RpcError> {
+        #[derive(Deserialize)]
+        struct ListResult {
+            #[serde(default)]
+            items: Vec<TaskMessage>,
+        }
+        Ok(self
+            .call_typed::<ListResult>("tasks.messages", json!({ "taskId": task_id }))?
+            .items)
     }
 
     pub fn tasks_brief_global(&self) -> Result<Value, RpcError> {
@@ -306,6 +329,81 @@ pub struct TaskMessageResult {
 pub struct TaskUpdateResult {
     #[serde(default)]
     pub task_id: String,
+    #[serde(default)]
+    pub status: String,
+}
+
+/// `decisions`/`blockers` may arrive as an array (backend splits newlines
+/// before sending) or as a raw newline-separated string.
+fn string_or_seq<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    Ok(match value {
+        Value::Array(items) => items
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect(),
+        Value::String(raw) => raw
+            .split('\n')
+            .map(|line| line.trim_end().to_string())
+            .filter(|line| !line.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    })
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskBrief {
+    #[serde(default)]
+    pub task_id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub summary: Option<String>,
+    #[serde(default, deserialize_with = "string_or_seq")]
+    pub decisions: Vec<String>,
+    #[serde(default, deserialize_with = "string_or_seq")]
+    pub blockers: Vec<String>,
+    #[serde(default)]
+    pub next_step: Option<String>,
+    #[serde(default)]
+    pub ceo: Option<TaskBriefCeo>,
+    #[serde(default)]
+    pub pending_messages: Option<u64>,
+}
+
+/// The CEO link embedded in `tasks.brief {taskId}`. `lastOutcome`/`lastOutcomeAt`
+/// may appear in a future backend (v5); everything is optional.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskBriefCeo {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub last_outcome: Option<String>,
+    #[serde(default)]
+    pub last_outcome_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskMessage {
+    #[serde(default)]
+    pub ts: String,
+    #[serde(default)]
+    pub direction: String,
+    #[serde(default)]
+    pub text: String,
     #[serde(default)]
     pub status: String,
 }
