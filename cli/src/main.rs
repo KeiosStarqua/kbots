@@ -11,6 +11,8 @@ use std::{
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 
+mod project_config;
+
 #[derive(Debug, Parser)]
 #[command(
     name = "kbots",
@@ -97,6 +99,14 @@ enum ProjectCommands {
     List,
     /// Show a registered project by ID.
     Show { project_id: String },
+    /// Create or regenerate per-bot OpenCode configs from .agents/bot/kbots.json.
+    Configure {
+        /// Existing project directory (defaults to the current directory).
+        path: Option<PathBuf>,
+        /// Replace existing per-bot opencode.jsonc files from the manifest.
+        #[arg(long)]
+        overwrite: bool,
+    },
 }
 
 fn main() {
@@ -110,6 +120,13 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
     match cli.command {
         Commands::Gui => run_ui("KBOTS_GUI_BIN", "kbots-gui"),
         Commands::Tui => run_ui("KBOTS_TUI_BIN", "kbots-tui"),
+        Commands::Project {
+            command: ProjectCommands::Configure { path, overwrite },
+        } => {
+            let result = project_config::configure_project(path, overwrite)?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            Ok(())
+        }
         command => {
             let (method, params) = rpc_call(command)?;
             let socket = socket_path(cli.socket);
@@ -143,6 +160,7 @@ fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> 
             ProjectCommands::Show { project_id } => {
                 ("projects.get", json!({ "projectId": project_id }))
             }
+            ProjectCommands::Configure { .. } => unreachable!("handled before RPC"),
         },
         Commands::Approve { approval_id } => {
             ("approvals.approve", json!({ "approvalId": approval_id }))
@@ -186,10 +204,7 @@ fn register_project(path: Option<PathBuf>, name: Option<String>) -> Result<Value
         )
     })?;
 
-    let bot_root = project_path.join(".agents").join("bot");
-    for role in ["ceo", "git", "ops"] {
-        fs::create_dir_all(bot_root.join(role))?;
-    }
+    project_config::ensure_project_bot_scaffold(&project_path)?;
 
     Ok(json!({
         "path": path,

@@ -40,15 +40,28 @@ Initial CLI methods:
 | `tasks cancel ID` | `tasks.cancel` | `taskId` |
 | `agents list` | `agents.list` | `{}` |
 | `project add [PATH] [--name NAME]` | `projects.register` | canonical `path`, display `name`, bot roles |
+| `project configure [PATH] [--overwrite]` | local CLI action | generate per-bot OpenCode configs from the manifest |
 | `project list` | `projects.list` | `{}` |
 | `project show ID` | `projects.get` | `projectId` |
 | `approve ID` | `approvals.approve` | `approvalId` |
 
-For `projects.register`, the CLI first canonicalizes the existing directory and
-ensures `.agents/bot/ceo`, `.agents/bot/git`, and `.agents/bot/ops` exist. It
-does not overwrite existing files or copy bot configs from another project.
-The daemon should upsert registrations by canonical path so repeated adds are
-idempotent.
+For `projects.register`, the CLI first canonicalizes the existing directory,
+creates missing `.agents/bot/{ceo,git,ops}` folders and starter `AGENTS.md`
+files, and generates the initial manifest/configs only when no per-bot
+`opencode.jsonc` already exists. It does not overwrite existing files or copy
+bot configs from another project. The daemon should upsert registrations by
+canonical path so repeated adds are idempotent.
+
+`kbots project configure [PATH]` is local and does not need the daemon. The
+editable `.agents/bot/kbots.json` has `version: 1` and a `bots` object with
+`ceo`, `git`, and `ops` entries. Each entry has `enabled` and an `opencode`
+object containing OpenCode config fields such as `instructions`, `plugins`,
+`model`, and `permission`. It writes `.agents/bot/<role>/opencode.jsonc` for
+enabled roles and preserves existing outputs by default. Use `--overwrite` to
+regenerate from the manifest. Local plugin paths are made absolute so they
+resolve consistently when OpenCode runs from a service working directory.
+When a project already has OpenCode configs but no manifest, create the
+manifest from those existing settings before using `--overwrite`.
 
 ## Bot folder convention
 

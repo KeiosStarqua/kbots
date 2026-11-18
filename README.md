@@ -66,10 +66,12 @@ kbots project list
 kbots project show <project-id>
 ```
 
-Registration canonicalizes the project path and creates the shared bot-role
-folders `.agents/bot/ceo`, `.agents/bot/git`, and `.agents/bot/ops` if missing.
-It leaves existing instructions and project-specific OpenCode configuration
-untouched. Registry persistence still requires the Bun daemon.
+Registration canonicalizes the project path and creates missing bot-role
+folders and starter instruction files. For a new bot setup, it also writes an
+editable `.agents/bot/kbots.json` manifest and generates each role's
+`opencode.jsonc`. Existing project configs are preserved. Edit the manifest
+and run `kbots project configure --overwrite` to regenerate them. Registry
+persistence still requires the Bun daemon.
 
 See [`gui/README.md`](gui/README.md) and [`tui/README.md`](tui/README.md) for
 the clients and planned IPC boundary, and
