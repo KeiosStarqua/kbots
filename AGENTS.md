@@ -7,12 +7,19 @@
 ## Ownership
 
 - This folder owns its package, lockfile, scripts, and `docs/` reference material.
+- Keep the Bun/TypeScript orchestration backend in `src/backend/` and the native
+  Slint desktop client in `gui/control-center/`. The GUI talks to a daemon over a
+  local IPC boundary; it must not own bot scheduling or OpenCode sessions.
+- Build the desktop UI with Slint; keep sample dashboard state clearly marked
+  until it is connected to the backend API.
+- Keep backend modules separated by responsibility: `cli/`, `opencode/`,
+  `orchestrator/`, `bots/`, `workflows/`, `adapters/`, and `db/`.
 - `film-production/.agents/bot/kir-auto/` owns the scheduled bot instructions and job log.
 
 ## Local Contracts
 
 - Use Bun and the exact dependency versions in `package.json`.
-- Use Effect v4 (`effect`) for new application logic, especially typed failures,
+- Use Effect v4 (`effect`) for new Bun/TypeScript application logic, especially typed failures,
   resource management, and asynchronous workflows. Import from `effect` and
   follow the v4 documentation; avoid introducing new ad hoc promise/error
   orchestration when Effect fits the operation.

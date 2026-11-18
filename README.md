@@ -1,10 +1,10 @@
 # kbots
 
-`kbots` is a small collection of local Bun tools for checking OpenCode SDK
-integration and controlling the OpenCode service registered on this laptop.
-It is intended for development and local automation, including inspecting and
-continuing the scheduled `kir-auto` bot session in the sibling
-`film-production` checkout.
+`kbots` is a local coding workflow orchestrator workspace. Its Bun/TypeScript
+backend manages OpenCode sessions and workflow automation; a native Slint
+Control Center is being built as its operator interface. The existing tools
+also support inspecting and continuing the scheduled `kir-auto` bot session
+in the sibling `film-production` checkout.
 
 The package has two entry points:
 
@@ -14,6 +14,23 @@ The package has two entry points:
 - **`control`** connects to the registered local OpenCode service. It can
   report service and provider information, inspect sessions, send prompts, or
   interrupt a session's current run.
+
+## Control Center starter
+
+The workspace separates the Bun backend in `src/backend/` from the Rust/Slint
+desktop client in `gui/control-center/`. The first dashboard includes sidebar
+navigation, project/task/agent/approval summary cards, agent activity, a task
+queue, and recent events. Its displayed values are demo data; it does not yet
+connect to a daemon.
+
+Run the desktop starter with:
+
+```sh
+cargo run --manifest-path gui/control-center/Cargo.toml
+```
+
+See [`gui/README.md`](gui/README.md) for the planned IPC boundary and
+[`src/backend/README.md`](src/backend/README.md) for backend module ownership.
 
 ## Requirements and setup
 

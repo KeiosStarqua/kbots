@@ -1,0 +1,274 @@
+import { Button, ScrollView } from "std-widgets.slint";
+
+component NavItem inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected: false;
+    callback pressed();
+
+    height: 42px;
+    border-radius: 8px;
+    background: selected ? #243029 : transparent;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        spacing: 10px;
+        Text {
+            text: selected ? "●" : "○";
+            color: selected ? #a5d6a7 : #64716a;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: label;
+            color: selected ? #ecf3ee : #9daaa1;
+            font-size: 14px;
+            font-weight: selected ? 600 : 400;
+            vertical-alignment: center;
+        }
+    }
+
+    TouchArea {
+        clicked => { root.pressed(); }
+    }
+}
+
+component MetricCard inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <string> detail;
+    in property <color> accent: #a5d6a7;
+
+    background: #171e1a;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: #28332c;
+
+    VerticalLayout {
+        padding: 18px;
+        spacing: 8px;
+        Text { text: label; color: #9aa79e; font-size: 13px; }
+        Text { text: value; color: #eff5f0; font-size: 30px; font-weight: 700; }
+        Text { text: detail; color: accent; font-size: 12px; }
+    }
+}
+
+component AgentRow inherits Rectangle {
+    in property <string> avatar;
+    in property <string> name;
+    in property <string> role;
+    in property <string> state;
+    in property <color> tint;
+    height: 68px;
+    background: transparent;
+    HorizontalLayout {
+        spacing: 12px;
+        Rectangle { width: 34px; height: 34px; border-radius: 10px; background: #243029;
+            Text { text: avatar; color: tint; font-size: 13px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+        }
+        VerticalLayout { spacing: 4px;
+            Text { text: name; color: #e5eee7; font-size: 13px; font-weight: 600; }
+            Text { text: role; color: #85938a; font-size: 11px; }
+        }
+        Rectangle { horizontal-stretch: 1; }
+        Text { text: state; color: tint; font-size: 11px; vertical-alignment: center; }
+    }
+}
+
+component QueueRow inherits Rectangle {
+    in property <string> number;
+    in property <string> title;
+    in property <string> project;
+    in property <string> state;
+    height: 52px;
+    HorizontalLayout {
+        spacing: 10px;
+        Text { text: number; color: #748078; font-size: 11px; vertical-alignment: center; }
+        VerticalLayout { spacing: 4px;
+            Text { text: title; color: #dce6de; font-size: 12px; }
+            Text { text: project; color: #819087; font-size: 10px; }
+        }
+        Rectangle { horizontal-stretch: 1; }
+        Text { text: state; color: #a5d6a7; font-size: 9px; vertical-alignment: center; }
+    }
+}
+
+component EventRow inherits Rectangle {
+    in property <string> time;
+    in property <string> event;
+    in property <string> description;
+    in property <color> tint;
+    height: 18px;
+    HorizontalLayout {
+        spacing: 10px;
+        Text { text: time; color: #6e7c73; font-size: 10px; }
+        Text { text: event; color: tint; font-size: 10px; }
+        Text { text: description; color: #a7b3aa; font-size: 10px; }
+    }
+}
+
+export component MainWindow inherits Window {
+    title: "kbots Control Center";
+    preferred-width: 1360px;
+    preferred-height: 860px;
+    min-width: 1040px;
+    min-height: 700px;
+    background: #101512;
+
+    in-out property <string> active-page: "Overview";
+
+    VerticalLayout {
+        spacing: 0px;
+
+        Rectangle {
+            height: 68px;
+            background: #141b17;
+            HorizontalLayout {
+            padding-left: 24px;
+            padding-right: 24px;
+            Rectangle { width: 30px; height: 30px; border-radius: 9px; background: #a5d6a7;
+                Text { text: "K"; color: #142018; font-size: 17px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+            }
+            Text { text: "kbots"; color: #eef4ef; font-size: 17px; font-weight: 700; vertical-alignment: center; }
+            Text { text: "/"; color: #526057; vertical-alignment: center; }
+            Text { text: "Control Center"; color: #9eaaa1; font-size: 14px; vertical-alignment: center; }
+            Rectangle { horizontal-stretch: 1; }
+            Rectangle { width: 9px; height: 9px; border-radius: 5px; background: #63c78a; }
+            Text { text: "Demo data"; color: #b9c8bd; font-size: 12px; vertical-alignment: center; }
+            Rectangle { width: 1px; height: 24px; background: #303a33; }
+            Text { text: "LOCAL WORKSPACE"; color: #748078; font-size: 10px; vertical-alignment: center; }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 0px;
+
+            Rectangle {
+                width: 220px;
+                background: #141b17;
+                VerticalLayout {
+                padding: 16px;
+                spacing: 5px;
+                Text { text: "WORKSPACE"; color: #647168; font-size: 10px; font-weight: 700; height: 28px; vertical-alignment: center; }
+                NavItem { label: "Overview"; selected: root.active-page == "Overview"; pressed => { root.active-page = "Overview"; } }
+                NavItem { label: "Projects"; selected: root.active-page == "Projects"; pressed => { root.active-page = "Projects"; } }
+                NavItem { label: "Tasks"; selected: root.active-page == "Tasks"; pressed => { root.active-page = "Tasks"; } }
+                NavItem { label: "Agents"; selected: root.active-page == "Agents"; pressed => { root.active-page = "Agents"; } }
+                NavItem { label: "Approvals"; selected: root.active-page == "Approvals"; pressed => { root.active-page = "Approvals"; } }
+                Rectangle { height: 1px; background: #28332c; }
+                Text { text: "OPERATIONS"; color: #647168; font-size: 10px; font-weight: 700; height: 32px; vertical-alignment: center; }
+                NavItem { label: "Activity log"; selected: root.active-page == "Activity log"; pressed => { root.active-page = "Activity log"; } }
+                NavItem { label: "Settings"; selected: root.active-page == "Settings"; pressed => { root.active-page = "Settings"; } }
+                Rectangle { vertical-stretch: 1; }
+                Rectangle {
+                    height: 68px;
+                    border-radius: 10px;
+                    background: #1a221d;
+                    VerticalLayout {
+                        padding: 12px;
+                        spacing: 4px;
+                        Text { text: "OpenCode service"; color: #dce6de; font-size: 12px; }
+                        Text { text: "Backend · not connected"; color: #84938a; font-size: 10px; }
+                    }
+                }
+                }
+            }
+
+            Rectangle { width: 1px; background: #27312b; }
+
+            ScrollView {
+                VerticalLayout {
+                    padding: 32px;
+                    spacing: 24px;
+
+                    HorizontalLayout {
+                        VerticalLayout {
+                            spacing: 6px;
+                            Text { text: root.active-page; color: #edf4ee; font-size: 27px; font-weight: 700; }
+                            Text { text: "Coordinate projects, agents, and delivery from one place."; color: #8e9c92; font-size: 13px; }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Button { text: "+  New task"; clicked => { root.active-page = "Tasks"; } }
+                    }
+
+                    GridLayout {
+                        spacing: 14px;
+                        MetricCard { row: 0; col: 0; label: "ACTIVE PROJECTS"; value: "03"; detail: "2 workflows running"; accent: #8dc8ff; }
+                        MetricCard { row: 0; col: 1; label: "OPEN TASKS"; value: "12"; detail: "4 ready to schedule"; }
+                        MetricCard { row: 0; col: 2; label: "ACTIVE AGENTS"; value: "04"; detail: "3 coding · 1 planning"; accent: #d3adff; }
+                        MetricCard { row: 0; col: 3; label: "APPROVALS"; value: "02"; detail: "Waiting for your review"; accent: #f0c674; }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 18px;
+                        VerticalLayout {
+                            spacing: 14px;
+                            HorizontalLayout {
+                                Text { text: "Agent activity"; color: #e8f0e9; font-size: 17px; font-weight: 650; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Text { text: "View all →"; color: #9acfa4; font-size: 12px; }
+                            }
+                            Rectangle {
+                                background: #171e1a;
+                                border-radius: 12px;
+                                border-width: 1px;
+                                border-color: #28332c;
+                                VerticalLayout {
+                                    padding: 10px;
+                                    AgentRow { avatar: "C"; name: "CEO Bot"; role: "Planning · api-service"; state: "Planning"; tint: #c9a7ff; }
+                                    AgentRow { avatar: "W"; name: "Worker 01"; role: "Implement OAuth callback"; state: "Working"; tint: #8dc8ff; }
+                                    AgentRow { avatar: "G"; name: "GIT Bot"; role: "Waiting for integration gate"; state: "Idle"; tint: #f0c674; }
+                                    AgentRow { avatar: "O"; name: "OPS Bot"; role: "api-service · test suite"; state: "Running"; tint: #9ad8a5; }
+                                }
+                            }
+                        }
+
+                        VerticalLayout {
+                            width: 310px;
+                            spacing: 14px;
+                            HorizontalLayout {
+                                Text { text: "Workflow queue"; color: #e8f0e9; font-size: 17px; font-weight: 650; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Text { text: "···"; color: #8e9c92; font-size: 18px; }
+                            }
+                            Rectangle {
+                                background: #171e1a;
+                                border-radius: 12px;
+                                border-width: 1px;
+                                border-color: #28332c;
+                                VerticalLayout {
+                                    padding: 16px;
+                                    spacing: 14px;
+                                    QueueRow { number: "01"; title: "Implement authentication"; project: "api-service"; state: "CODING"; }
+                                    Rectangle { height: 1px; background: #28332c; }
+                                    QueueRow { number: "02"; title: "Update billing dashboard"; project: "merchant-portal"; state: "REVIEW"; }
+                                    Rectangle { height: 1px; background: #28332c; }
+                                    QueueRow { number: "03"; title: "Fix webhook retries"; project: "api-service"; state: "QUEUED"; }
+                                }
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        Text { text: "Recent events"; color: #e8f0e9; font-size: 17px; font-weight: 650; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text { text: "Live updates are not connected yet"; color: #748078; font-size: 11px; }
+                    }
+                    Rectangle {
+                        height: 105px;
+                        background: #171e1a;
+                        border-radius: 12px;
+                        border-width: 1px;
+                        border-color: #28332c;
+                        VerticalLayout {
+                            padding: 14px;
+                            spacing: 10px;
+                            EventRow { time: "10:42:18"; event: "worker.completed"; description: "Worker 01 finished task TASK-104"; tint: #91d49e; }
+                            EventRow { time: "10:39:51"; event: "review.requested"; description: "TASK-102 is ready for CEO review"; tint: #d2b2ff; }
+                            EventRow { time: "10:34:06"; event: "ops.started"; description: "Test suite started for api-service"; tint: #8dc8ff; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
