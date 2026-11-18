@@ -62,3 +62,11 @@ Integrate completed work into the project’s primary branch under the repositor
 - Use the project’s configured watcher or monitor. Maintain its required instance count and do not run a second watcher alongside it.
 - After each integration, report the branch, resulting commit, remote status, ops handoff, and cleanup. Clearly state anything still pending.
 - Keep project-local instructions, plugins, registries, and state in this project; never copy them from another repository.
+
+## Verifying changes
+
+- The default build path for this project's CLI, GUI (Slint) and TUI (Ratatui) crates is plain cargo: `cargo check`, `cargo clippy` and `cargo build --release` with `--manifest-path <crate>` (`cli/`, `tui/control-center/`, `gui/`).
+- The Bun/TypeScript backend is verified with `bun run tsc --noEmit`.
+- Do not assume hosted or remote build wrappers (justrust or similar) exist — they are optional and generally unavailable. If the project opts into such a toolchain under its own instructions, follow those; otherwise cargo is canonical.
+- If a required build or test seems to need a paid service or an account upgrade, stop and report instead of attempting it.
+- Never run the project's deploy path unless the project instructions explicitly assign that to this role; verification and deployment usually belong to ops — see "Ops handoff" above.
