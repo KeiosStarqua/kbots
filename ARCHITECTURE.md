@@ -197,7 +197,7 @@ above. The v1 RPC surface includes:
 | `tasks.message`, `tasks.messages`, `tasks.brief`, `tasks.inbox`, `tasks.update` | v2 task-centric dispatch: follow-up routing to the task's CEO, queued-message backlog, DB-composed briefings, unified needs-action inbox, operator status transitions |
 | `projects.register`, `projects.list`, `projects.get` | Project registry |
 | `agents.list` | Bot roles, runs, session identifiers, and managed bots (`managed`) |
-| `agents.start`, `agents.show`, `agents.stop`, `agents.interrupt`, `agents.prompt` | Managed bot lifecycle: exact session binding, terminal+headless modes, SQLite registry |
+| `agents.start`, `agents.show`, `agents.stop`, `agents.interrupt`, `agents.prompt`, `agents.attach` | Managed bot lifecycle: exact session binding, terminal+headless modes, SQLite registry; `attach` upgrades a running headless agent to terminal mode on the same session |
 | `approvals.list`, `approvals.approve` | Protected operation approvals |
 | `events.list` | Recent activity for the GUI |
 

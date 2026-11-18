@@ -118,6 +118,8 @@ enum AgentCommands {
     },
     /// Show one agent and probe its runtime.
     Show { bot_id: String },
+    /// Attach an hc terminal to a running headless agent (same session).
+    Attach { bot_id: String },
     /// Stop one agent (keeps its OpenCode session and history).
     Stop { bot_id: String },
     /// Send a prompt to one agent.
@@ -270,6 +272,7 @@ fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> 
                 json!({ "role": role, "mode": mode.as_str(), "project": project, "fresh": fresh }),
             ),
             AgentCommands::Show { bot_id } => ("agents.show", json!({ "botId": bot_id })),
+            AgentCommands::Attach { bot_id } => ("agents.attach", json!({ "botId": bot_id })),
             AgentCommands::Stop { bot_id } => ("agents.stop", json!({ "botId": bot_id })),
             AgentCommands::Prompt { bot_id, text } => {
                 ("agents.prompt", json!({ "botId": bot_id, "text": text }))

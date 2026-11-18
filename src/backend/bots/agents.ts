@@ -292,6 +292,60 @@ export async function agentsStartHandler(params: Record<string, unknown>): Promi
   }
 }
 
+/**
+ * Attach an hc terminal to an already-running headless agent, on the SAME
+ * OpenCode session (`opencode --session <id>` in the agent's directory).
+ * The registry flips mode headless → terminal; from then on reconcile
+ * treats it like any terminal-bound agent. Idempotent while attached.
+ */
+export async function agentsAttachHandler(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+  await reconcileAgents()
+  const agent = mustGetAgent(params)
+  const project = getProject(agent.projectId)
+  if (agent.mode === "terminal" && agent.hcAddress) {
+    return managedPayload(agent, await probeAgent(agent), project?.name)
+  }
+  if (!agent.sessionId) {
+    throw invalidParams(`agent ${agent.id} has no session to attach`)
+  }
+  if (agent.status === "stopped" || agent.status === "stopping") {
+    throw invalidParams(`agent ${agent.id} is ${agent.status}; start it first`)
+  }
+  if (agent.status === "error") {
+    throw invalidParams(
+      `agent ${agent.id} is in error (${agent.lastError ?? "unknown"}); start it fresh instead of attaching`,
+    )
+  }
+  if (!project) {
+    throw new RpcError(-32602, `agent ${agent.id} references unknown project: ${agent.projectId}`)
+  }
+  const spawned = await spawnTerminal(agent, project.path, project.name, agent.sessionId)
+  // Lost update race (another attach wrote hcAddress in between): kill our
+  // extra terminal rather than leak it.
+  const current = getAgent(agent.id)
+  if (current?.hcAddress && current.hcAddress !== spawned.address) {
+    try {
+      await killTerminal(spawned.address)
+    } catch {
+      // best effort
+    }
+    return managedPayload(current, await probeAgent(current), project.name)
+  }
+  const updated = updateAgent(agent.id, {
+    mode: "terminal",
+    hcAddress: spawned.address,
+    name: spawned.name ?? agent.name,
+    status: "running",
+    lastError: null,
+  })!
+  addEvent(
+    "bot.attached",
+    `Agent ${agent.id} attached to terminal ${spawned.address} (session ${agent.sessionId})`,
+    { agentId: agent.id, hcAddress: spawned.address, sessionId: updated.sessionId },
+  )
+  return managedPayload(updated, await probeAgent(updated), project.name)
+}
+
 export async function agentsStopHandler(params: Record<string, unknown>): Promise<Record<string, unknown>> {
   await reconcileAgents()
   let agent = mustGetAgent(params)

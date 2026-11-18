@@ -47,6 +47,7 @@ Initial CLI methods:
 | `project watch` (no `--project`) | `watchers.list` | `{}` — list configured watchers |
 | `agents start ROLE [--mode terminal\|headless] [--project REF] [--fresh]` | `agents.start` | `role`, optional `mode` (default `terminal`), optional `project`, optional `fresh` |
 | `agents show ID` | `agents.show` | `botId` |
+| `agents attach ID` | `agents.attach` | `botId` |
 | `agents stop ID` | `agents.stop` | `botId` |
 | `agents prompt ID TEXT` | `agents.prompt` | `botId`, `text` |
 | `agents interrupt ID` | `agents.interrupt` | `botId` |
@@ -70,6 +71,7 @@ Result shapes for the read and create methods:
 | `agents.list` | `{items: [{projectId?, projectPath, role, enabled, sessionID\|null, directory, registered, herdr?}], liveTerminals: [{address, agent?, name?, cwd, state?, status?, turn?, projectId?, role?}], filteredOut, registeredProjects, generatedAt, herdrUnavailable?, managed: [ManagedAgent]}` — `herdr` is attached on an exact role-directory match; `liveTerminals` is the read-only `hc ls` view, filtered to terminals inside registered project paths (`filteredOut` counts those hidden); `managed` lists every agent in the managed registry with its probed live status |
 | `agents.start` | ManagedAgent object: `{id, projectId, projectName?, role, mode, directory, status, sessionId, hcAddress, name, createdAt, updatedAt, stoppedAt, lastError?, live}` — idempotent while running; resumes the stopped agent's session |
 | `agents.show` | ManagedAgent object for one bot |
+| `agents.attach` | ManagedAgent object — spawns an hc terminal on the SAME OpenCode session (`opencode --session <id>`), flips `mode` headless → terminal, binds `hcAddress`; idempotent while a terminal is already bound |
 | `agents.stop` | `{id, projectId, role, mode, status, sessionId, stoppedAt, …}` — terminal is killed; the OpenCode session and history are kept |
 | `agents.prompt` | `{botId, mode, accepted, turn?}` — refuses unless the agent is idle (never `force`s past a blocked program) |
 | `agents.interrupt` | `{botId, mode, key?, outcome?}` — `terminal` mode: stop key (esc); `headless` mode: OpenCode session interrupt |
@@ -146,7 +148,12 @@ disappeared, and marks broken sessions unreachable.
 One active agent per project+role at most (partial unique index). Stopping
 kills the terminal but keeps the OpenCode session and its history —
 `agents.start` later resumes the exact same session. `--fresh` starts a new
-one instead. `prompt` refuses unless the agent is idle (they are never sent
+one instead. `agents.attach` upgrades a running headless agent to terminal mode
+without touching the session: it spawns `opencode --session <sessionId>` in the
+role directory (same flags/labels as a terminal-mode start), binds the new
+`hcAddress`, and from then on reconcile treats the agent as terminal-bound.
+Attaching twice returns the existing binding; an `error` agent must be started
+fresh rather than attached. `prompt` refuses unless the agent is idle (they are never sent
 with `force`): terminal mode probes the `hc` status word, headless mode
 probes the session outcome; `interrupt` sends the stop key in terminal mode
 or interrupts the session in headless mode. Nothing deletes a session.
@@ -332,7 +339,7 @@ JSON-RPC `-32601`.
 
 Honest v1 semantics:
 
-- `agents.start/show/stop/prompt/interrupt` manage bot agents through the
+- `agents.start/show/stop/attach/prompt/interrupt` manage bot agents through the
   daemon (see "Managed agents" above). `agents.list` additionally returns
   them in `managed`.
 - `tasks.create` records the task (status `"planning"`) and logs an event.

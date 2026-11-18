@@ -19,7 +19,7 @@ pub fn render(method: &str, value: &Value) -> Option<String> {
         "projects.get" => Some(render_project_get(value)),
         "approvals.approve" => Some(render_approval(value)),
         "agents.list" => Some(render_agents(value)),
-        "agents.start" | "agents.show" => Some(render_agent_detail(value)),
+        "agents.start" | "agents.show" | "agents.attach" => Some(render_agent_detail(value)),
         "agents.stop" => Some(render_agent_action(value, "stopped")),
         "agents.prompt" => Some(render_agent_action(value, "accepted")),
         "agents.interrupt" => Some(render_agent_interrupt(value)),
