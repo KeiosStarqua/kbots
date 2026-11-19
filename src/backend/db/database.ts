@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { mkdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
-import { AGENTS_DDL, SCHEMA_DDL, SCHEMA_VERSION, TASKS_V4_DDL, V5_DDL, WATCHERS_DDL } from "./schema.ts"
+import { AGENTS_DDL, SCHEMA_DDL, SCHEMA_VERSION, TASKS_V4_DDL, V5_DDL, V6_DDL, WATCHERS_DDL } from "./schema.ts"
 
 export function defaultDatabasePath(): string {
   const stateRoot = process.env.XDG_STATE_HOME ?? join(homedir(), ".local/state")
@@ -34,6 +34,7 @@ export function openDatabase(path: string = defaultDatabasePath()): Database {
       }
     }
     if (current <= 4) db.exec(V5_DDL)
+    if (current <= 5) db.exec(V6_DDL)
   }
   if (current < SCHEMA_VERSION) {
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)

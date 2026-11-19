@@ -54,6 +54,7 @@ import {
   watchersListHandler,
   watchersSetHandler,
 } from "./orchestrator/watchers.ts"
+import { startNudgeLoop } from "./orchestrator/nudger.ts"
 
 const MAX_REQUEST_BYTES = 1024 * 1024
 const SOCKET_TIMEOUT_MS = 10_000
@@ -294,6 +295,7 @@ async function main(): Promise<void> {
   await chmod(path, 0o600)
   console.error(`${DAEMON_NAME}: listening on ${path}`)
   const stopWatcher = startWatcherLoop()
+  const stopNudge = startNudgeLoop()
   void reconcileAgents()
     .then(({ checked, changed }) => {
       if (checked > 0) console.error(`${DAEMON_NAME}: reconciled ${checked} live agent(s), ${changed} changed`)

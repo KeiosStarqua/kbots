@@ -1197,3 +1197,68 @@ export function updateWatcherState(
   db.query(`UPDATE watchers SET ${sets.join(", ")} WHERE project_id = ?`).run(...values)
   return getWatcher(projectId, db)
 }
+
+// ---------------------------------------------------------------------------
+// Auto-kick (nudge): remember per-task nudge budget and last-kick time.
+// ---------------------------------------------------------------------------
+
+export interface NudgeCandidate {
+  taskId: string
+  title: string
+  status: TaskStatus
+  projectId: string | null
+  projectPath: string | null
+  nudges: number
+  ceoAgentId: string
+}
+
+const NUDGE_ACTIVE_STATUSES: readonly TaskStatus[] = ["researching", "planning", "delegating", "running"]
+
+/**
+ * Tasks past dispatch (dispatched, non-terminal, owned by a currently
+ * running terminal-mode CEO) that are due a nudge: never nudged, or last
+ * nudge older than `cooldownMs`. Oldest first. `blocked`/`review` are
+ * excluded — those wait on a human, not the CEO.
+ */
+export function listNudgeCandidates(
+  cooldownMs: number,
+  maxNudges: number,
+  db: Database = getDb(),
+): NudgeCandidate[] {
+  const cutoff = new Date(Date.now() - cooldownMs).toISOString()
+  const placeholders = NUDGE_ACTIVE_STATUSES.map(() => "?").join(", ")
+  const rows = db
+    .query(
+      `SELECT tasks.id AS task_id, tasks.title, tasks.status, tasks.project_id,
+              projects.path AS project_path, tasks.nudges, agents.id AS ceo_id
+       FROM tasks
+       LEFT JOIN projects ON projects.id = tasks.project_id
+       JOIN task_agents ON task_agents.task_id = tasks.id AND task_agents.role = 'ceo'
+       JOIN agents ON agents.id = task_agents.agent_id
+       WHERE tasks.status IN (${placeholders})
+         AND agents.status = 'running' AND agents.mode = 'terminal'
+         AND tasks.nudges < ?
+         AND (tasks.last_nudged_at IS NULL OR tasks.last_nudged_at < ?)
+       ORDER BY tasks.created_at ASC`,
+    )
+    .all(...NUDGE_ACTIVE_STATUSES, maxNudges, cutoff) as Array<Record<string, unknown>>
+  return rows.map((row) => ({
+    taskId: String(row.task_id),
+    title: String(row.title),
+    status: row.status as TaskStatus,
+    projectId: row.project_id === null || row.project_id === undefined ? null : String(row.project_id),
+    projectPath: row.project_path === null || row.project_path === undefined ? null : String(row.project_path),
+    nudges: Number(row.nudges ?? 0),
+    ceoAgentId: String(row.ceo_id),
+  }))
+}
+
+/** Record a delivered nudge: consume budget, refresh timestamp. */
+export function recordNudge(taskId: string, at: string, db: Database = getDb()): void {
+  db.query("UPDATE tasks SET nudges = nudges + 1, last_nudged_at = ?, updated_at = ? WHERE id = ?").run(at, at, taskId)
+}
+
+/** Bump only the cooldown timestamp (nudge skipped/declined) without spending budget. */
+export function touchNudgeCooldown(taskId: string, at: string, db: Database = getDb()): void {
+  db.query("UPDATE tasks SET last_nudged_at = ? WHERE id = ?").run(at, taskId)
+}

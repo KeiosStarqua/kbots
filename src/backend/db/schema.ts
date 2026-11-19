@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 5
+export const SCHEMA_VERSION = 6
 
 // v1 → v2 delta: the managed agent registry. Applied to databases already at
 // user_version 1; fresh databases run SCHEMA_DDL which embeds everything.
@@ -128,6 +128,13 @@ ALTER TABLE agents ADD COLUMN last_outcome_at TEXT;
 ALTER TABLE task_messages ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
 `
 
+// v5 → v6 delta: per-task nudge bookkeeping for the auto-kick routine.
+export const V6_DDL = `
+ALTER TABLE tasks ADD COLUMN nudges INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN last_nudged_at TEXT;
+CREATE INDEX IF NOT EXISTS idx_tasks_nudge ON tasks(status, last_nudged_at);
+`
+
 export const SCHEMA_DDL = `
 CREATE TABLE IF NOT EXISTS projects(
   id TEXT PRIMARY KEY,
@@ -147,8 +154,11 @@ CREATE TABLE IF NOT EXISTS tasks(
   updated_at TEXT NOT NULL,
   canceled_at TEXT,
   goal TEXT,
-  detail TEXT
+  detail TEXT,
+  nudges INTEGER NOT NULL DEFAULT 0,
+  last_nudged_at TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_tasks_nudge ON tasks(status, last_nudged_at);
 
 CREATE TABLE IF NOT EXISTS approvals(
   id TEXT PRIMARY KEY,
