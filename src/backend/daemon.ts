@@ -12,11 +12,16 @@
  * Start manually: `bun run daemon` (or `bun run src/backend/daemon.ts`).
  * Socket resolution (same order as the CLI): --socket PATH, KBOTS_SOCKET,
  * $XDG_RUNTIME_DIR/kbots.sock, $HOME/.local/run/kbots.sock.
+ * Unless --socket/KBOTS_SOCKET is explicit and the primary lands in
+ * $XDG_RUNTIME_DIR, the daemon also binds a secondary listener on
+ * $HOME/.local/run/kbots.sock so sandboxed agents (whose AF_UNIX connect to
+ * /run/user/* is denied) can reach it through the fallback path. The
+ * secondary listener is skipped when another daemon already serves it.
  */
 import { chmod, mkdir, unlink } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
-import { createServer, type Socket } from "node:net"
+import { connect, createServer, type Server, type Socket } from "node:net"
 
 import { RpcError } from "./errors.ts"
 import { registerProjectHandler, listProjectsHandler, getProjectHandler } from "./orchestrator/projects.ts"
@@ -74,13 +79,34 @@ function socketPath(override?: string): string {
   return join(process.env.HOME ?? homedir(), ".local", "run", "kbots.sock")
 }
 
+// The fallback socket sandboxed agents can reach when /run/user/* is denied.
+// Not bound when the user picked the socket explicitly (--socket / KBOTS_SOCKET)
+// or the primary already is the fallback.
+function fallbackSocketPath(override: string | undefined, primary: string): string | null {
+  if (override || process.env.KBOTS_SOCKET) return null
+  const home = join(process.env.HOME ?? homedir(), ".local", "run", "kbots.sock")
+  return home === primary ? null : home
+}
+
+// True when something is already serving this socket (do not steal it).
+function socketInUse(path: string): Promise<boolean> {
+  return new Promise((resolvePromise) => {
+    const probe = connect(path)
+    probe.once("connect", () => {
+      probe.end()
+      resolvePromise(true)
+    })
+    probe.once("error", () => resolvePromise(false))
+  })
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-function buildHandlers(socket: string): Record<string, Handler> {
+function buildHandlers(socket: string, secondarySocket?: string): Record<string, Handler> {
   return {
-    "system.status": () => systemStatusHandler({ socketPath: socket, startedAt }),
+    "system.status": () => systemStatusHandler({ socketPath: socket, secondarySocketPath: secondarySocket, startedAt }),
     "tasks.create": createTaskHandler,
     "tasks.list": listTasksHandler,
     "tasks.get": getTaskHandler,
@@ -181,26 +207,61 @@ async function handleConnection(socket: Socket, handlers: Record<string, Handler
   socket.on("error", () => socket.destroy())
 }
 
+async function bindSecondary(
+  path: string,
+  handlers: Record<string, Handler>,
+): Promise<Server | null> {
+  try {
+    if (await socketInUse(path)) {
+      console.error(`${DAEMON_NAME}: secondary socket ${path} already serving; not binding it`)
+      return null
+    }
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+    await unlink(path).catch(() => {})
+    const server = createServer((socket) => {
+      void handleConnection(socket, handlers)
+    })
+    await new Promise<void>((resolvePromise, rejectPromise) => {
+      server.once("error", rejectPromise)
+      server.listen(path, resolvePromise)
+    })
+    await chmod(path, 0o600)
+    console.error(`${DAEMON_NAME}: listening on ${path} (secondary)`)
+    return server
+  } catch (error) {
+    // Never take the daemon down because the optional fallback failed.
+    console.error(`${DAEMON_NAME}: could not bind secondary socket ${path}: ${error instanceof Error ? error.message : String(error)}`)
+    return null
+  }
+}
+
 async function main(): Promise<void> {
   const { socket: override } = parseArgs(process.argv.slice(2))
   const path = socketPath(override)
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
   await unlink(path).catch(() => {})
 
-  const handlers = buildHandlers(path)
+  const secondary = fallbackSocketPath(override, path)
+  const handlers = buildHandlers(path, secondary ?? undefined)
   const server = createServer((socket) => {
     void handleConnection(socket, handlers)
   })
 
+  let secondaryServer: Server | null = null
   const shutdown = () => {
     stopWatcher()
+    secondaryServer?.close()
     server.close(() => {
-      void unlink(path).finally(() => process.exit(0))
+      const removals = [unlink(path).catch(() => {})]
+      if (secondaryServer) removals.push(unlink(secondary!).catch(() => {}))
+      void Promise.all(removals).finally(() => process.exit(0))
     })
     setTimeout(() => process.exit(0), 2_000).unref()
   }
   process.on("SIGINT", shutdown)
   process.on("SIGTERM", shutdown)
+
+  secondaryServer = secondary ? await bindSecondary(secondary, handlers) : null
 
   await new Promise<void>((resolvePromise, rejectPromise) => {
     server.once("error", rejectPromise)

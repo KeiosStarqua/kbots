@@ -21,35 +21,46 @@ const MAX_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
-/// Where the socket lives, in the contract's discovery order:
+/// Socket candidates in the contract's discovery order:
 /// `KBOTS_SOCKET` → `$XDG_RUNTIME_DIR/kbots.sock` → `$HOME/.local/run/kbots.sock`.
-/// Returns the first candidate that exists; otherwise the best guess so the
-/// error message names a useful path.
-pub fn discover_socket() -> Option<PathBuf> {
+/// An explicit `KBOTS_SOCKET` means exactly that one path; otherwise the
+/// client falls back to the next candidate when a connect fails (a sandbox
+/// may deny /run/user/* while $HOME works).
+pub fn socket_candidates() -> Vec<PathBuf> {
     if let Ok(explicit) = env::var("KBOTS_SOCKET") {
         let trimmed = explicit.trim();
         if !trimmed.is_empty() {
-            return Some(PathBuf::from(trimmed));
+            return vec![PathBuf::from(trimmed)];
         }
     }
-    let xdg = env::var("XDG_RUNTIME_DIR")
+    let mut candidates = Vec::new();
+    if let Some(xdg) = env::var("XDG_RUNTIME_DIR")
         .ok()
         .map(|dir| PathBuf::from(dir).join("kbots.sock"))
-        .filter(|path| !path.as_os_str().is_empty());
-    if let Some(path) = xdg.as_ref()
-        && path.exists()
+        .filter(|path| !path.as_os_str().is_empty())
     {
-        return Some(path.clone());
+        candidates.push(xdg);
     }
-    let home = env::var("HOME")
+    if let Some(home) = env::var("HOME")
         .ok()
-        .map(|dir| PathBuf::from(dir).join(".local/run/kbots.sock"));
-    if let Some(path) = home.as_ref()
-        && path.exists()
+        .map(|dir| PathBuf::from(dir).join(".local/run/kbots.sock"))
+        && !candidates.contains(&home)
     {
-        return Some(path.clone());
+        candidates.push(home);
     }
-    xdg.or(home).filter(|path| path.parent().is_some())
+    candidates
+}
+
+/// Where the socket lives, in the contract's discovery order.
+/// Returns the first candidate that exists; otherwise the best guess so the
+/// error message names a useful path.
+pub fn discover_socket() -> Option<PathBuf> {
+    let candidates = socket_candidates();
+    candidates
+        .iter()
+        .find(|path| path.exists())
+        .cloned()
+        .or_else(|| candidates.into_iter().next())
 }
 
 #[derive(Debug)]
@@ -100,13 +111,19 @@ impl fmt::Display for RpcError {
 
 #[derive(Clone)]
 pub struct RpcClient {
-    socket_path: PathBuf,
+    socket_candidates: Vec<PathBuf>,
 }
 
 impl RpcClient {
     pub fn new() -> Self {
+        let candidates = socket_candidates();
+        let candidates = if candidates.is_empty() {
+            vec![PathBuf::from("kbots.sock")]
+        } else {
+            candidates
+        };
         Self {
-            socket_path: discover_socket().unwrap_or_else(|| PathBuf::from("kbots.sock")),
+            socket_candidates: candidates,
         }
     }
 
@@ -121,8 +138,25 @@ impl RpcClient {
         params: Value,
         timeout: Duration,
     ) -> Result<Value, RpcError> {
-        let mut stream = UnixStream::connect(&self.socket_path)
-            .map_err(|error| RpcError::Connect(format!("{} ({})", self.socket_path.display(), error)))?;
+        let mut stream = None;
+        let mut connect_errors = Vec::with_capacity(self.socket_candidates.len());
+        for candidate in &self.socket_candidates {
+            match UnixStream::connect(candidate) {
+                Ok(connected) => {
+                    stream = Some(connected);
+                    break;
+                }
+                Err(error) => {
+                    connect_errors.push(format!("{} ({error})", candidate.display()));
+                }
+            }
+        }
+        let mut stream = stream.ok_or_else(|| {
+            RpcError::Connect(format!(
+                "cannot reach daemon socket (tried: {})",
+                connect_errors.join("; ")
+            ))
+        })?;
         stream
             .set_read_timeout(Some(timeout))
             .map_err(|error| RpcError::Transport(error.to_string()))?;

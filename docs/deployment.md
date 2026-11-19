@@ -66,7 +66,10 @@ The installed unit (`deploy/kbots-daemon.service`) is `Type=simple`,
 `Restart=on-failure`, `RestartSec=2`, `WantedBy=default.target` — it starts on
 login and auto-restarts. The socket defaults to `$XDG_RUNTIME_DIR/kbots.sock`
 (falling back to `$HOME/.local/run/kbots.sock`); set `KBOTS_SOCKET` in the
-unit to override.
+unit to override. By default the daemon also binds a secondary listener on
+`$HOME/.local/run/kbots.sock` (skipped when `KBOTS_SOCKET`/`--socket` is set
+or another daemon serves that path) so sandboxed agents that cannot connect
+to `/run/user/*` can reach it via the fallback.
 
 ## Deploy tags and versioning (SemVer + CalVer)
 
@@ -121,9 +124,11 @@ project/task counts; JSON when piped or with `--json`. Sample (real, trimmed):
 ```
 
 The socket: default path is `$XDG_RUNTIME_DIR/kbots.sock`, fallback
-`$HOME/.local/run/kbots.sock`; override with `KBOTS_SOCKET` or `--socket`. The
-daemon creates the socket's parent directory, unlinks stale sockets, sets mode
-0600, and cleans up on SIGINT/SIGTERM. Check it:
+`$HOME/.local/run/kbots.sock` (also bound as a secondary listener by default —
+see above); override with `KBOTS_SOCKET` or `--socket` (an explicit override
+disables the secondary listener). The daemon creates the socket's parent
+directory, unlinks stale sockets, sets mode 0600, and cleans up on
+SIGINT/SIGTERM. Check it:
 
 ```sh
 ls -l "$XDG_RUNTIME_DIR/kbots.sock"   # expect srw-------

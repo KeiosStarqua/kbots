@@ -17,7 +17,12 @@ use terminal::{HcClient, ScreenCell, TerminalEvent};
 
 slint::include_modules!();
 
-fn socket_path() -> PathBuf {
+/// Socket candidates in the contract's discovery order:
+/// `--socket`/`KBOTS_SOCKET` → `$XDG_RUNTIME_DIR/kbots.sock` → `$HOME/.local/run/kbots.sock`.
+/// An explicit socket means exactly that one path; otherwise the client falls
+/// back to the next candidate when a connect fails (a sandbox may deny
+/// /run/user/* while $HOME works).
+fn socket_candidates() -> Vec<PathBuf> {
     let mut args = env::args().skip(1);
     let mut explicit = None;
     while let Some(arg) = args.next() {
@@ -30,17 +35,41 @@ fn socket_path() -> PathBuf {
             break;
         }
     }
-    explicit
-        .or_else(|| env::var_os("KBOTS_SOCKET").map(PathBuf::from))
-        .or_else(|| env::var_os("XDG_RUNTIME_DIR").map(|p| PathBuf::from(p).join("kbots.sock")))
-        .or_else(|| env::var_os("HOME").map(|p| PathBuf::from(p).join(".local/run/kbots.sock")))
-        .unwrap_or_else(|| PathBuf::from("/tmp/kbots.sock"))
+    if let Some(path) = explicit.or_else(|| env::var_os("KBOTS_SOCKET").map(PathBuf::from)) {
+        return vec![path];
+    }
+    let mut candidates = Vec::new();
+    if let Some(path) = env::var_os("XDG_RUNTIME_DIR").map(|p| PathBuf::from(p).join("kbots.sock")) {
+        candidates.push(path);
+    }
+    let home = env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".local/run/kbots.sock");
+    if !candidates.contains(&home) {
+        candidates.push(home);
+    }
+    candidates
 }
 
 fn rpc(method: &str, params: Value) -> Result<Value, String> {
-    let path = socket_path();
-    let mut stream = UnixStream::connect(&path)
-        .map_err(|e| format!("Cannot connect to {}: {e}", path.display()))?;
+    let candidates = socket_candidates();
+    let mut stream = None;
+    let mut connect_errors = Vec::with_capacity(candidates.len());
+    for candidate in &candidates {
+        match UnixStream::connect(candidate) {
+            Ok(connected) => {
+                stream = Some(connected);
+                break;
+            }
+            Err(e) => {
+                connect_errors.push(format!("{}: {e}", candidate.display()));
+            }
+        }
+    }
+    let mut stream = stream.ok_or_else(|| {
+        format!("Cannot connect to daemon socket (tried: {})", connect_errors.join("; "))
+    })?;
     stream
         .set_read_timeout(Some(Duration::from_secs(4)))
         .map_err(|e| e.to_string())?;

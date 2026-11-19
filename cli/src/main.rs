@@ -265,8 +265,8 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
         } => run_sessions_start(directory, cli.json),
         command => {
             let (method, params) = rpc_call(command)?;
-            let socket = socket_path(cli.socket);
-            let response = request(&socket, method, params)?;
+            let candidates = socket_candidates(cli.socket);
+            let response = request_with_fallback(&candidates, method, params)?;
             emit(method, &response, cli.json);
             Ok(())
         }
@@ -490,35 +490,56 @@ fn register_project(path: Option<PathBuf>, name: Option<String>) -> Result<Value
     }))
 }
 
-fn socket_path(override_path: Option<PathBuf>) -> PathBuf {
+/// Socket candidates in the contract's discovery order. An explicit
+/// `--socket` or `KBOTS_SOCKET` means exactly that one path; otherwise the
+/// clients fall back to the next candidate when a connect fails (a sandbox
+/// may deny /run/user/* while $HOME works).
+fn socket_candidates(override_path: Option<PathBuf>) -> Vec<PathBuf> {
     if let Some(path) = override_path {
-        return path;
+        return vec![path];
     }
     if let Some(path) = env::var_os("KBOTS_SOCKET") {
-        return PathBuf::from(path);
+        return vec![PathBuf::from(path)];
     }
+    let mut candidates = Vec::new();
     if let Some(runtime_dir) = env::var_os("XDG_RUNTIME_DIR") {
-        return PathBuf::from(runtime_dir).join("kbots.sock");
+        candidates.push(PathBuf::from(runtime_dir).join("kbots.sock"));
     }
-    env::var_os("HOME")
+    let home = env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".local/run/kbots.sock")
+        .join(".local/run/kbots.sock");
+    if !candidates.contains(&home) {
+        candidates.push(home);
+    }
+    candidates
+}
+
+fn request_with_fallback(
+    candidates: &[PathBuf],
+    method: &str,
+    params: Value,
+) -> Result<Value, Box<dyn Error>> {
+    let mut errors = Vec::with_capacity(candidates.len());
+    for socket in candidates {
+        match request(socket, method, params.clone()) {
+            Ok(response) => return Ok(response),
+            Err(error) => errors.push(format!("{}: {error}", socket.display())),
+        }
+    }
+    Err(format!(
+        "cannot connect to daemon socket (tried: {}); start the kbots daemon or set KBOTS_SOCKET",
+        errors.join("; ")
+    )
+    .into())
 }
 
 #[cfg(unix)]
 fn request(socket: &std::path::Path, method: &str, params: Value) -> Result<Value, Box<dyn Error>> {
     use std::os::unix::net::UnixStream;
 
-    let mut stream = UnixStream::connect(socket).map_err(|error| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            format!(
-                "cannot connect to daemon socket {}: {error}; start the kbots daemon or set KBOTS_SOCKET",
-                socket.display()
-            ),
-        )
-    })?;
+    let mut stream = UnixStream::connect(socket)
+        .map_err(|error| io::Error::from(error))?;
     stream.set_read_timeout(Some(Duration::from_secs(15)))?;
     stream.set_write_timeout(Some(Duration::from_secs(15)))?;
 

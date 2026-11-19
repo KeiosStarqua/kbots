@@ -8,12 +8,24 @@ after `./install.sh` (opt out with `KBOTS_SKIP_DAEMON_UNIT=1`), or manually
 with `bun run daemon` (equivalently `bun run src/backend/daemon.ts`) without
 systemd.
 
-The CLI discovers the socket in this order:
+The daemon listens on two Unix domain sockets by default — the primary plus a
+sandbox-reachable fallback — and clients try them in the discovery order:
 
-1. `--socket PATH`
-2. `KBOTS_SOCKET`
-3. `$XDG_RUNTIME_DIR/kbots.sock`
-4. `$HOME/.local/run/kbots.sock`
+1. `--socket PATH` (CLI/GUI) / `KBOTS_SOCKET` (all clients)
+2. `$XDG_RUNTIME_DIR/kbots.sock`
+3. `$HOME/.local/run/kbots.sock`
+
+An explicit `--socket`/`KBOTS_SOCKET` means exactly that one path. Otherwise a
+client falls back to the next candidate when a connect fails, not only when a
+socket is missing — a sandbox (Landlock/seccomp, container) may deny `connect()`
+to `/run/user/*` with `EPERM` while `$HOME` works.
+
+The daemon binds the primary socket from the discovery order. When that lands
+in `$XDG_RUNTIME_DIR` and neither `--socket` nor `KBOTS_SOCKET` is set, it also
+binds a secondary listener on `$HOME/.local/run/kbots.sock` (mode `0600`,
+unlinked on SIGINT/SIGTERM, skipped without stealing if another daemon already
+serves it, and never fatal to the daemon if it fails). Sandboxed agents that
+cannot reach `/run/user/*` connect through the fallback path instead.
 
 Example request:
 
@@ -398,7 +410,9 @@ the common directories only; it leaves those project contracts to each repo.
 The daemon exists and serves the methods above. It stores state in SQLite at
 `${XDG_STATE_HOME:-~/.local/state}/kbots/kbots.db` (WAL mode). It creates the
 socket's parent directory, unlinks stale sockets, sets the socket mode to
-`0600`, and cleans up the socket on SIGINT/SIGTERM. Unknown methods return
+`0600`, and cleans up the socket on SIGINT/SIGTERM. It also binds the
+`$HOME/.local/run/kbots.sock` fallback described above unless an explicit
+socket is set or the primary already is that path. Unknown methods return
 JSON-RPC `-32601`.
 
 Honest v1 semantics:
