@@ -7,6 +7,9 @@ use std::{
 use serde_json::{Map, Value, json};
 
 const ROLES: [&str; 3] = ["ceo", "git", "ops"];
+/// The embedded Codex task-router bot folder. Seeded and synced alongside the
+/// OpenCode roles, but not an OpenCode role: no manifest entry, no config.
+const SEEDED_ROLES: [&str; 4] = ["ceo", "git", "ops", "router"];
 const CONFIG_FILE: &str = "kbots.json";
 const OPENCODE_SCHEMA: &str = "https://opencode.ai/config.json";
 
@@ -106,7 +109,7 @@ pub fn sync_project(
     let mut current: Vec<String> = Vec::new();
     let mut kept: Vec<String> = Vec::new();
     let mut backups: Vec<String> = Vec::new();
-    for role in ROLES {
+    for role in SEEDED_ROLES {
         let role_dir = project_root.join(bot_dir(role));
         fs::create_dir_all(&role_dir)?;
         let agents_path = role_dir.join("AGENTS.md");
@@ -158,7 +161,7 @@ fn backup_agents_md(role_dir: &Path) -> Result<PathBuf, Box<dyn Error>> {
 }
 
 fn ensure_role_folders_and_instructions(project_root: &Path) -> Result<(), Box<dyn Error>> {
-    for role in ROLES {
+    for role in SEEDED_ROLES {
         let role_dir = project_root.join(bot_dir(role));
         fs::create_dir_all(&role_dir)?;
         let agents_path = role_dir.join("AGENTS.md");
@@ -325,6 +328,7 @@ fn default_agents(role: &str) -> &'static str {
         "ceo" => include_str!("../templates/bots/ceo/AGENTS.md"),
         "git" => include_str!("../templates/bots/git/AGENTS.md"),
         "ops" => include_str!("../templates/bots/ops/AGENTS.md"),
+        "router" => include_str!("../templates/bots/router/AGENTS.md"),
         _ => unreachable!("unknown bot role"),
     }
 }

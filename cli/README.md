@@ -104,7 +104,7 @@ The Bun daemon and JSON-RPC server exist (v1 minimal) and run as the
 `KBOTS_SKIP_DAEMON_UNIT=1`; without systemd, `bun run daemon`). Until it
 is running, `status`, `tasks`, `projects`, `agents`, and `approve` return a
 clear connection error. `project add` prepares missing
-`.agents/bot/{ceo,git,ops}` folders and starter `AGENTS.md` files before the
+`.agents/bot/{ceo,git,ops,router}` folders and starter `AGENTS.md` files before the
 daemon request. Editable source templates live in `cli/templates/bots/` and
 are embedded into the CLI binary at build time. Kbots creates a starter only
 when that role’s `AGENTS.md` is missing; it never replaces existing bot
@@ -124,7 +124,7 @@ copy their settings into `.agents/bot/kbots.json`, then run
 `kbots project configure --overwrite`. Project-specific instructions and
 plugins stay local instead of being copied between repositories.
 
-`kbots project sync` refreshes the starter `.agents/bot/{ceo,git,ops}/AGENTS.md`
+`kbots project sync` refreshes the starter `.agents/bot/{ceo,git,ops,router}/AGENTS.md`
 files from the templates embedded at build time. Missing files are created;
 files identical to the template are left alone; customized files are kept unless
 `--force` is passed, in which case each is backed up next to the original as

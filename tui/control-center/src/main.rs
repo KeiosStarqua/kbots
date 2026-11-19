@@ -3,7 +3,7 @@ mod rpc;
 
 use std::collections::BTreeMap;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -650,15 +650,49 @@ impl App {
         self.codex_binding = if next == 0 { None } else { Some((next - 1) as usize) };
     }
 
-    fn spawn_codex(&mut self, key: &str) {
+    /// Walk from `start` up to (and including) the enclosing git root and
+    /// return the `.agents/bot/router` folder found there, if any. Never
+    /// escapes the repository.
+    fn find_router_dir(start: &Path) -> Option<PathBuf> {
+        let mut dir = start.to_path_buf();
+        loop {
+            let candidate = dir.join(".agents").join("bot").join("router");
+            if candidate.is_dir() {
+                return Some(candidate);
+            }
+            let at_git_root = dir.join(".git").is_dir() || dir.join(".git").is_file();
+            if at_git_root || !dir.pop() {
+                return None;
+            }
+        }
+    }
+
+    fn codex_cwd(&self) -> PathBuf {
+        // Codex runs inside the project's router bot folder when it exists —
+        // that's where the task-router instructions live (see
+        // `kb project add` / `kb project sync` scaffolding).
         let info = self.codex_binding_info();
-        let cwd = info
+        let project_root = info
             .as_ref()
             .map(|(_, path, _)| PathBuf::from(path))
             .filter(|path| !path.as_os_str().is_empty())
             .unwrap_or_else(|| {
                 std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
             });
+        if let Some(found) = Self::find_router_dir(&project_root) {
+            return found;
+        }
+        if let Ok(cwd) = std::env::current_dir()
+            && let Some(found) = Self::find_router_dir(&cwd)
+        {
+            return found;
+        }
+        project_root
+    }
+
+    fn spawn_codex(&mut self, key: &str) {
+        let info = self.codex_binding_info();
+        let cwd = self.codex_cwd();
         let context = info.map(|(id, _, title)| {
             format!("Continue the kbots task {id}: {title}. Work in this repository.")
         });

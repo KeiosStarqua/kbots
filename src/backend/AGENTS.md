@@ -17,7 +17,7 @@
 - Clients (CLI, GUI, TUI) never own bot scheduling or OpenCode sessions; all daemon-owned operations go through the IPC contract in `../../docs/kbots-ipc.md` (v2 task-centric methods: schema v5, per-task CEO session pool, `tasks.message`/`tasks.brief`/`tasks.inbox`/`tasks.update`, auto-dispatch on `tasks.create`).
 - Read saved provider connections through OpenCode; never print credential values or auth headers.
 - Session commands default to the current directory; pass `--directory` to select another project. Prompting and interrupting sessions are explicit actions. Do not delete sessions. Interrupting a session does not stop a recurring schedule attached to it.
-- Every configured project uses `.agents/bot/{ceo,git,ops}`; the `.agents/bot/kbots.json` manifest generates per-role `opencode.jsonc` files. Preserve existing configs by default; regenerate only with `kbots project configure --overwrite`. Never copy project-specific bot instructions, plugins, or local state between repos.
+- Every configured project uses `.agents/bot/{ceo,git,ops}` plus `.agents/bot/router/` (embedded Codex task router; not an OpenCode role); the `.agents/bot/kbots.json` manifest generates per-role `opencode.jsonc` files for ceo/git/ops only. Preserve existing configs by default; regenerate only with `kbots project configure --overwrite`. Never copy project-specific bot instructions, plugins, or local state between repos.
 
 ## Work Guidance
 

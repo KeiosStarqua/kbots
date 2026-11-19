@@ -23,7 +23,7 @@ contract is documented but still needs its owning backend implementation.
 ```text
                     ┌───────────────────────────────┐
                     │ Local project directories     │
-                    │ .agents/bot/{ceo,git,ops}      │
+                    │ .agents/bot/{ceo,git,ops,router}
                     │ kbots.json + OpenCode configs  │
                     └──────────────┬────────────────┘
                                    │ project setup / session start

@@ -85,7 +85,7 @@ implemented (v1), so GUI operations complete when it is running; the Ratatui
 TUI is still demo-only and does not connect.
 
 For `projects.register`, the CLI first canonicalizes the existing directory,
-creates missing `.agents/bot/{ceo,git,ops}` folders and starter `AGENTS.md`
+creates missing `.agents/bot/{ceo,git,ops,router}` folders and starter `AGENTS.md`
 files, and generates the initial manifest/configs only when no per-bot
 `opencode.jsonc` already exists. It does not overwrite existing files or copy
 bot configs from another project. The daemon upserts registrations by

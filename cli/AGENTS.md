@@ -6,7 +6,7 @@
 
 ## Ownership
 
-- Owns this directory: the Cargo package (binary `kbots`), `src/`, and `templates/bots/{ceo,git,ops}/AGENTS.md` starter files used when seeding `.agents/bot/` role directories.
+- Owns this directory: the Cargo package (binary `kbots`), `src/`, and `templates/bots/{ceo,git,ops,router}/AGENTS.md` starter files used when seeding `.agents/bot/` role directories. The `router` starter seeds the embedded Codex task-router folder and is never added to the manifest or OpenCode configs.
 - Does not own orchestration logic, workflow state, or session scheduling — those live in the Bun backend (`../src/backend/`).
 
 ## Local Contracts
