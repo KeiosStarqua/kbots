@@ -14,6 +14,28 @@ use serde_json::{Value, json};
 mod project_config;
 mod render;
 
+/// Walk up from the current directory and return the nearest directory that
+/// contains a `.agents/bot` folder (i.e. a project `kbots project add` has
+/// scaffolded). Used to scope list commands to the current project when
+/// `--project` is not given. Returns None outside any project.
+fn current_project_path() -> Option<PathBuf> {
+    let mut dir = env::current_dir().ok()?;
+    loop {
+        if dir.join(".agents/bot").is_dir() {
+            return fs::canonicalize(&dir).ok();
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+/// Resolve `--project`, defaulting to the enclosing kbots project when run
+/// inside one. Falls back to None (unfiltered) outside any project.
+fn scoped_project(project: Option<String>) -> Option<String> {
+    project.or_else(|| current_project_path().map(|p| p.to_string_lossy().into_owned()))
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "kbots",
@@ -310,7 +332,9 @@ fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> 
                 }
                 ("tasks.create", params)
             }
-            TaskCommands::List { project } => ("tasks.list", json!({ "project": project })),
+            TaskCommands::List { project } => {
+                ("tasks.list", json!({ "project": scoped_project(project) }))
+            },
             TaskCommands::Show { task_id } => ("tasks.get", json!({ "taskId": task_id })),
             TaskCommands::Cancel { task_id } => ("tasks.cancel", json!({ "taskId": task_id })),
             TaskCommands::Message { task_id, text } => (
@@ -338,7 +362,9 @@ fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> 
             }
         },
         Commands::Agents { command } => match command {
-            AgentCommands::List { project } => ("agents.list", json!({ "project": project })),
+            AgentCommands::List { project } => {
+                ("agents.list", json!({ "project": scoped_project(project) }))
+            },
             AgentCommands::Start {
                 role,
                 mode,
