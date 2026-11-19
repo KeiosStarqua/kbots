@@ -3,9 +3,7 @@
 //!
 //! One request per connection (the v1 protocol): write a single line, read a
 //! single response line. Read and write timeouts are ~10 s so a wedged
-//! daemon can never freeze the UI for longer than that. `router.run` uses a
-//! longer (120 s) timeout because the router performs one bounded model
-//! turn.
+//! daemon can never freeze the UI for longer than that.
 
 use std::env;
 use std::fmt;
@@ -19,7 +17,6 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 const IO_TIMEOUT: Duration = Duration::from_secs(10);
-const ROUTER_IO_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -274,21 +271,6 @@ impl RpcClient {
         self.call_typed("system.status", json!({}))
     }
 
-    /// Route free text through the daemon's natural-language router
-    /// (`router.run`). The router performs one bounded model turn, so it
-    /// uses a longer timeout than regular methods.
-    pub fn router_run(
-        &self,
-        project: Option<&str>,
-        text: &str,
-    ) -> Result<RouterRunResult, RpcError> {
-        let mut params = json!({ "text": text });
-        if let Some(project) = project {
-            params["project"] = json!(project);
-        }
-        let result = self.call_with_timeout("router.run", params, ROUTER_IO_TIMEOUT)?;
-        serde_json::from_value(result).map_err(|error| RpcError::Parse(error.to_string()))
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -546,72 +528,6 @@ pub struct SystemStatus {
     pub daemon: Option<DaemonInfo>,
     #[serde(default)]
     pub projects: Option<i64>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RouterDecision {
-    #[serde(default)]
-    pub action: String,
-    #[serde(default)]
-    pub confidence: f64,
-    #[serde(default)]
-    pub project_id: Option<String>,
-    #[serde(default)]
-    pub title: Option<String>,
-    #[serde(default)]
-    pub task_id: Option<String>,
-    #[serde(default)]
-    pub message: Option<String>,
-    #[serde(default)]
-    pub question: Option<String>,
-    #[serde(default)]
-    pub candidate_task_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RouterCandidate {
-    #[serde(default)]
-    pub task_id: String,
-    #[serde(default)]
-    pub title: String,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RouterOutcome {
-    #[serde(default)]
-    pub kind: String,
-    #[serde(default)]
-    pub task_id: Option<String>,
-    #[serde(default)]
-    pub status: Option<String>,
-    #[serde(default)]
-    pub ceo_agent_id: Option<String>,
-    #[serde(default)]
-    pub dispatch_error: Option<String>,
-    #[serde(default)]
-    pub outcome: Option<String>,
-    #[serde(default)]
-    pub agent_id: Option<String>,
-    #[serde(default)]
-    pub message_id: Option<String>,
-    #[serde(default)]
-    pub question: Option<String>,
-    #[serde(default)]
-    pub candidate_task_ids: Vec<String>,
-    #[serde(default)]
-    pub candidates: Vec<RouterCandidate>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RouterRunResult {
-    #[serde(default)]
-    pub decision: RouterDecision,
-    #[serde(default)]
-    pub outcome: RouterOutcome,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
