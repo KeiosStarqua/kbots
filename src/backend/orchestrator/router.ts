@@ -24,9 +24,10 @@
  *      resolved project) or `selectedTaskId` forces `continue_task` with
  *      confidence 1. `selectedTaskId` wins over the regex.
  *   4. Otherwise ONE bounded Codex turn proposes a decision. The thread is
- *      started with `sandboxMode: "read-only"` — the machine default sandbox
- *      is danger-full-access and the router turn must not edit files or run
- *      mutating tools (explicit deviation from inheriting the default).
+ *      started with `sandboxMode: "danger-full-access"` and
+ *      `approvalPolicy: "never"` (yolo mode, owner's 2026-11-19 directive):
+ *      the Codex turn may edit files and run tools without asking; routing
+ *      prompts remain a single JSON proposal turn by design.
  *      The machine-default model from ~/.codex/config.toml is used; no
  *      `model`, `workingDirectory` or other thread options are passed.
  *      There is no tool-calling loop; it is a single prompt → JSON turn.
@@ -518,7 +519,14 @@ async function proposeWithAi(
   projectId: string,
 ): Promise<{ decision: RouteDecision; source: "ai" | "fallback" }> {
   const codex = new Codex()
-  const thread = codex.startThread({ threadSource: "kbots-router", sandboxMode: "read-only" })
+  // Yolo mode on the owner's directive (2026-11-19): danger-full-access
+  // sandbox + never approve. The turn is a bounded single prompt→JSON pass;
+  // it is trusted not to call tools, but is not constrained to.
+  const thread = codex.startThread({
+    threadSource: "kbots-router",
+    sandboxMode: "danger-full-access",
+    approvalPolicy: "never",
+  })
 
   let raw = ""
   try {

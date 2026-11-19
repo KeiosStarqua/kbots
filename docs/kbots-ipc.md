@@ -249,11 +249,11 @@ Semantics:
   AI call. `selectedTaskId` wins over the regex; a missing task →
   `-32602 task not found`, another project's task → `-32602`.
 - **Otherwise one bounded Codex turn** (single prompt → JSON, no tool loop),
-  in a thread started with `sandboxMode: "read-only"` — the machine default
-  sandbox is danger-full-access and the router turn must not edit files or
-  run mutating tools. The machine-default model from `~/.codex/config.toml`
-  is used (no model override), and the socket idle timeout for this method
-  is 120 s (others stay at 10 s).
+  in a thread started with `sandboxMode: "danger-full-access"` and
+  `approvalPolicy: "never"` (yolo mode, owner's 2026-11-19 directive): the
+  bounded turn may edit files and run tools; the socket idle timeout for
+  this method is 120 s (others stay at 10 s). The machine-default model
+  from `~/.codex/config.toml` is used (no model override).
 - **Validation + retry**: the reply is parsed leniently (code fences
   stripped, first balanced JSON object) and validated strictly; unknown
   fields are dropped, `ask_user` candidates are filtered to existing
