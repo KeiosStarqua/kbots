@@ -2504,7 +2504,7 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
             ])
         } else {
             Line::from(vec![
-                Span::styled("Ctrl+] ", Style::default().fg(Color::LightGreen).bold()),
+                Span::styled("^] or click ✕ ", Style::default().fg(Color::LightGreen).bold()),
                 Span::raw("dashboard · Ctrl+←/→ bind task · wheel scroll · Ctrl+R respawn · everything else goes to Codex"),
             ])
         }

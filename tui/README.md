@@ -25,7 +25,9 @@ The terminal is bound to "free" or to an open task: `Ctrl+←`/`Ctrl+→` cycle
 the binding, one pty per bound task is kept alive in memory (switching back
 loses no context), and the bound task's `TASK-id`/title is the spawn context.
 The mouse wheel (or `Ctrl+Shift+↑`/`Ctrl+Shift+↓`) scrolls the 1000-line
-scrollback; `Ctrl+R` respawns a dead Codex. Quitting kbots kills the
+scrollback; `Ctrl+R` respawns a dead Codex. A green `✕ exit codex` button at
+the top-right border of the Codex pane leaves the page with one click
+(touch/Moshi friendly), alongside `Ctrl+]`. Quitting kbots kills the
 terminal children. Under Moshi/SSH everything is a keyboard, so the chords
 matter.
 The dashboard polls every 5 seconds only while running, renders only on input or data
