@@ -26,14 +26,17 @@ use rpc::{
     TaskBrief, TaskMessage, brief_entry_line, truncate_chars,
 };
 
-const NAVIGATION: [&str; 6] = [
+const NAVIGATION: [&str; 7] = [
     "Overview",
     "Projects",
     "Tasks",
     "Agents",
     "Approvals",
     "Activity log",
+    "Codex",
 ];
+
+const CODEX_SECTION: usize = 6;
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -57,7 +60,10 @@ enum BgResult {
     Brief(Result<serde_json::Value, RpcError>),
     Inbox(Result<Vec<InboxItem>, RpcError>),
     TaskCreated(Result<rpc::TaskCreateResult, RpcError>),
-    TaskMessaged(Result<rpc::TaskMessageResult, RpcError>),
+    TaskMessaged {
+        result: Result<rpc::TaskMessageResult, RpcError>,
+        prompt: String,
+    },
     TaskUpdated(Result<rpc::TaskUpdateResult, RpcError>),
     RouterRan {
         result: Result<rpc::RouterRunResult, RpcError>,
@@ -171,6 +177,36 @@ struct PendingAsk {
     original_text: String,
 }
 
+/// One exchange with Codex, kept in memory for the session. `outcome` is
+/// `None` while the bounded Codex turn is still running.
+struct CodexTurn {
+    prompt: String,
+    outcome: Option<CodexOutcome>,
+}
+
+enum CodexOutcome {
+    Created {
+        task_id: String,
+        status: String,
+        ceo_agent_id: Option<String>,
+        dispatch_error: Option<String>,
+    },
+    Continued {
+        task_id: String,
+        delivered: bool,
+    },
+    Ask {
+        question: String,
+        candidates: Vec<rpc::RouterCandidate>,
+    },
+    Failed(String),
+    DryRun {
+        action: String,
+        confidence: f64,
+    },
+    Other(String),
+}
+
 struct App {
     // navigation (kept from the original TUI)
     selected: usize,
@@ -204,6 +240,7 @@ struct App {
     pending_ask: Option<PendingAsk>,
     overlay: Option<Overlay>,
     overlay_scroll: usize,
+    codex_turns: Vec<CodexTurn>,
 }
 
 impl App {
@@ -239,6 +276,7 @@ impl App {
             pending_ask: None,
             overlay: None,
             overlay_scroll: 0,
+            codex_turns: Vec::new(),
         }
     }
 
@@ -393,40 +431,50 @@ impl App {
                 self.composer_note = Some(note);
                 self.request_refresh();
             }
-            BgResult::TaskMessaged(result) => {
-                let note = match result {
+            BgResult::TaskMessaged { result, prompt } => {
+                let (note, outcome) = match result {
                     Ok(sent) => {
-                        if sent.outcome == "delivered" {
+                        let delivered = sent.outcome == "delivered";
+                        let note = if delivered {
                             let via = sent
                                 .message_id
                                 .as_deref()
                                 .map(|id| format!(" (msg {})", truncate_chars(id, 10)))
                                 .unwrap_or_default();
-                            (format!("Sent to CEO of {}{}", sent.task_id, via), false)
+                            format!("Sent to CEO of {}{}", sent.task_id, via)
                         } else {
-                            (format!("Queued for {} (CEO busy)", sent.task_id), false)
-                        }
+                            format!("Queued for {} (CEO busy)", sent.task_id)
+                        };
+                        (
+                            (note, false),
+                            CodexOutcome::Continued {
+                                task_id: sent.task_id,
+                                delivered,
+                            },
+                        )
                     }
-                    Err(error) => (error_note(&error), true),
+                    Err(error) => {
+                        let detail = error_note(&error);
+                        ((detail.clone(), true), CodexOutcome::Failed(detail))
+                    }
                 };
+                self.complete_codex_turn(Some(&prompt), outcome);
                 self.composer_note = Some(note);
                 self.request_refresh();
             }
             BgResult::RouterRan { result, original } => match result {
                 Err(error) => {
-                    self.composer_note = Some((error_note(&error), true));
+                    let detail = error_note(&error);
+                    self.composer_note = Some((detail.clone(), true));
                     self.pending_ask = None;
+                    self.complete_codex_turn(Some(&original), CodexOutcome::Failed(detail));
                     self.request_refresh();
                 }
                 Ok(run) => match run.outcome.kind.as_str() {
                     "created" => {
                         let task_id = run.outcome.task_id.clone().unwrap_or_default();
-                        let note = match run
-                            .outcome
-                            .dispatch_error
-                            .as_deref()
-                            .filter(|err| !err.is_empty())
-                        {
+                        let dispatch_error = run.outcome.dispatch_error.clone();
+                        let note = match dispatch_error.as_deref().filter(|err| !err.is_empty()) {
                             Some(err) => (
                                 format!("Created {task_id} (dispatch failed: {err})"),
                                 true,
@@ -435,17 +483,31 @@ impl App {
                         };
                         self.composer_note = Some(note);
                         self.pending_ask = None;
+                        self.complete_codex_turn(
+                            Some(&original),
+                            CodexOutcome::Created {
+                                task_id,
+                                status: run.outcome.status.clone().unwrap_or_default(),
+                                ceo_agent_id: run.outcome.ceo_agent_id.clone(),
+                                dispatch_error,
+                            },
+                        );
                         self.request_refresh();
                     }
                     "continued" => {
                         let task_id = run.outcome.task_id.clone().unwrap_or_default();
-                        let note = if run.outcome.outcome.as_deref() == Some("delivered") {
+                        let delivered = run.outcome.outcome.as_deref() == Some("delivered");
+                        let note = if delivered {
                             format!("Sent to CEO of {task_id}")
                         } else {
                             format!("Queued for {task_id} (CEO busy)")
                         };
                         self.composer_note = Some((note, false));
                         self.pending_ask = None;
+                        self.complete_codex_turn(
+                            Some(&original),
+                            CodexOutcome::Continued { task_id, delivered },
+                        );
                         self.request_refresh();
                     }
                     "ask_user" => {
@@ -469,11 +531,18 @@ impl App {
                             .clone()
                             .unwrap_or_else(|| "Which task?".to_string());
                         self.pending_ask = Some(PendingAsk {
-                            question,
-                            candidates,
-                            original_text: original,
+                            question: question.clone(),
+                            candidates: candidates.clone(),
+                            original_text: original.clone(),
                         });
                         self.composer_note = None;
+                        self.complete_codex_turn(
+                            Some(&original),
+                            CodexOutcome::Ask {
+                                question,
+                                candidates,
+                            },
+                        );
                     }
                     "dry_run" => {
                         self.composer_note = Some((
@@ -484,10 +553,21 @@ impl App {
                             false,
                         ));
                         self.pending_ask = None;
+                        self.complete_codex_turn(
+                            Some(&original),
+                            CodexOutcome::DryRun {
+                                action: run.decision.action.clone(),
+                                confidence: run.decision.confidence,
+                            },
+                        );
                     }
                     other => {
                         self.composer_note = Some((format!("router: {other}"), true));
                         self.pending_ask = None;
+                        self.complete_codex_turn(
+                            Some(&original),
+                            CodexOutcome::Other(format!("router: {other}")),
+                        );
                     }
                 },
             },
@@ -636,6 +716,41 @@ impl App {
         }
     }
 
+    /// The composer routes somewhere; open a transcript entry for the turn.
+    fn push_codex_turn(&mut self, prompt: String) {
+        self.codex_turns.push(CodexTurn {
+            prompt,
+            outcome: None,
+        });
+    }
+
+    /// Close the transcript entry that matches `prompt`; if none is pending
+    /// (e.g. an ask was answered with 1–9), append a finished entry instead.
+    fn complete_codex_turn(&mut self, prompt: Option<&str>, outcome: CodexOutcome) {
+        if let Some(prompt) = prompt {
+            match self
+                .codex_turns
+                .iter_mut()
+                .rev()
+                .find(|turn| turn.outcome.is_none() && turn.prompt == prompt)
+            {
+                Some(turn) => turn.outcome = Some(outcome),
+                None => self.codex_turns.push(CodexTurn {
+                    prompt: prompt.to_string(),
+                    outcome: Some(outcome),
+                }),
+            }
+            return;
+        }
+        match self.codex_turns.iter_mut().rev().find(|turn| turn.outcome.is_none()) {
+            Some(turn) => turn.outcome = Some(outcome),
+            None => self.codex_turns.push(CodexTurn {
+                prompt: String::new(),
+                outcome: Some(outcome),
+            }),
+        }
+    }
+
     // -- composer -----------------------------------------------------------
 
     fn composer_submit(&mut self) {
@@ -655,8 +770,13 @@ impl App {
                             self.composer_note = Some(("usage: @N your message".into(), true));
                         } else {
                             self.composer_note = Some((format!("sending to {task_id}…"), false));
+                            self.push_codex_turn(text.clone());
+                            let prompt = text.clone();
                             self.spawn_bg(move |client| {
-                                BgResult::TaskMessaged(client.tasks_message(&task_id, &message))
+                                BgResult::TaskMessaged {
+                                    result: client.tasks_message(&task_id, &message),
+                                    prompt,
+                                }
                             });
                         }
                     }
@@ -682,6 +802,7 @@ impl App {
         let note_router = truncate_chars(&text, 40);
         self.composer_note = Some((format!("routing “{note_router}”…"), false));
         let original = text.clone();
+        self.push_codex_turn(text.clone());
         self.spawn_bg(move |client| BgResult::RouterRan {
             result: client.router_run(project.as_deref(), &text),
             original,
@@ -999,10 +1120,15 @@ impl App {
                         if index < ask.candidates.len() {
                             let task_id = ask.candidates[index].task_id.clone();
                             let message = ask.original_text.clone();
+                            let display = format!("{} → {}", index + 1, task_id);
                             self.composer_note =
                                 Some((format!("sending to {task_id}…"), false));
+                            self.push_codex_turn(display.clone());
                             self.spawn_bg(move |client| {
-                                BgResult::TaskMessaged(client.tasks_message(&task_id, &message))
+                                BgResult::TaskMessaged {
+                                    result: client.tasks_message(&task_id, &message),
+                                    prompt: display,
+                                }
                             });
                         } else {
                             self.pending_ask = Some(ask);
@@ -1020,6 +1146,10 @@ impl App {
         }
 
         match code {
+            // On the Codex page, Enter arms the chat input.
+            KeyCode::Enter if self.active_section() == CODEX_SECTION => {
+                self.composer_focused = true;
+            }
             KeyCode::Char('q') | KeyCode::Esc => return true,
             KeyCode::Down | KeyCode::Char('j') => {
                 self.move_section(1);
@@ -1028,9 +1158,14 @@ impl App {
             KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('n') => self.move_section(1),
             KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('p') => self.move_section(-1),
             KeyCode::Tab => self.composer_focused = true,
-            KeyCode::Char('1'..='6') => {
+            KeyCode::Char('1'..='7') => {
                 if let KeyCode::Char(number) = code {
                     self.selected = (number as usize) - ('1' as usize);
+                    // The Codex page is a chat: jumping to it arms the input.
+                    if self.selected == CODEX_SECTION {
+                        self.composer_focused = true;
+                        self.composer_note = None;
+                    }
                 }
             }
             // Focus-by-typing: printable characters that are not navigation
@@ -1038,7 +1173,7 @@ impl App {
             KeyCode::Char(c)
                 if !modifiers.contains(KeyModifiers::CONTROL)
                     && !modifiers.contains(KeyModifiers::ALT)
-                    && !matches!(c, 'q' | 'j' | 'k' | 'h' | 'l' | 'n' | 'p' | '1'..='6') =>
+                    && !matches!(c, 'q' | 'j' | 'k' | 'h' | 'l' | 'n' | 'p' | '1'..='7') =>
             {
                 self.composer_focused = true;
                 self.composer_text.push(c);
@@ -1274,7 +1409,11 @@ fn main() -> io::Result<()> {
 fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
     let banner = disconnected_banner(app);
-    let note_visible = app.pending_ask.is_some() || app.composer_note.is_some();
+    // On the Codex page the composer note and pending ask render inside the
+    // transcript instead of below it.
+    let codex_active = app.active_section() == CODEX_SECTION;
+    let note_visible =
+        !codex_active && (app.pending_ask.is_some() || app.composer_note.is_some());
     let note_height = app
         .pending_ask
         .as_ref()
@@ -1498,6 +1637,7 @@ fn render_section(frame: &mut Frame, area: Rect, app: &App, section: usize) {
         3 => render_agents(frame, area, app),
         4 => render_approvals(frame, area, app),
         5 => render_activity(frame, area, app),
+        6 => render_codex_section(frame, area, app),
         _ => render_overview(frame, area, app),
     }
 }
@@ -2321,6 +2461,224 @@ fn render_activity(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
+// -- Codex -------------------------------------------------------------------
+
+/// The Codex page is a chat-style session against the daemon's natural-
+/// language router: every message gets one bounded, read-only Codex turn
+/// (or a deterministic `@TASK-n` bypass). The transcript lives for this UI
+/// session only — persistence stays in the daemon's event log.
+fn render_codex_section(frame: &mut Frame, area: Rect, app: &App) {
+    let awaiting = app.codex_turns.iter().any(|turn| turn.outcome.is_none());
+    let title = if awaiting {
+        " Codex · thinking… ".to_string()
+    } else {
+        " Codex · plain language → router ".to_string()
+    };
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(panel_border(app.composer_focused && app.active_section() == CODEX_SECTION));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let width = inner.width as usize;
+    let gutter = 7usize; // "you   " / "codex "
+    let mut lines: Vec<Line> = Vec::new();
+
+    if app.codex_turns.is_empty() {
+        let gray = Style::default().fg(Color::Gray);
+        let dim = Style::default().fg(Color::DarkGray);
+        lines.push(Line::from(Span::styled(
+            "Talk to Codex in plain language.",
+            Style::default().fg(Color::White).bold(),
+        )));
+        lines.push(Line::from(Span::styled(
+            "Each message gets one bounded, read-only Codex turn: it either",
+            gray,
+        )));
+        lines.push(Line::from(Span::styled(
+            "files a task (dispatched to a CEO) or messages a task's CEO.",
+            gray,
+        )));
+        lines.push(Line::default());
+        for (example, effect) in [
+            ("\"add a health-check endpoint to the API\"", "new task"),
+            ("\"TASK-12 tighten the retry logic\"", "message that CEO"),
+            ("\"continue the flaky-test work: …\"", "Codex picks the task"),
+        ] {
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(example, Style::default().fg(Color::LightGreen)),
+                Span::styled(format!("  → {effect}"), dim),
+            ]));
+        }
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(
+            "Explicit @TASK-n or TASK-n always bypasses Codex (deterministic).",
+            dim,
+        )));
+        lines.push(Line::from(Span::styled(
+            "The input below is armed — just type and press Enter.",
+            dim,
+        )));
+    } else {
+        for turn in &app.codex_turns {
+            for (index, wrapped) in wrap_text(&turn.prompt, width.saturating_sub(gutter + 2))
+                .into_iter()
+                .enumerate()
+            {
+                if index == 0 {
+                    lines.push(Line::from(vec![
+                        Span::styled("you   ", Style::default().fg(Color::Gray).bold()),
+                        Span::styled(wrapped, Style::default().fg(Color::White).bold()),
+                    ]));
+                } else {
+                    lines.push(Line::from(vec![
+                        Span::raw("      "),
+                        Span::styled(wrapped, Style::default().fg(Color::White).bold()),
+                    ]));
+                }
+            }
+            match &turn.outcome {
+                None => lines.push(Line::from(vec![
+                    Span::styled("codex ", Style::default().fg(Color::LightGreen).bold()),
+                    Span::styled(
+                        format!("{} working…", app.spinner_frame()),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ])),
+                Some(outcome) => codex_outcome_lines(&mut lines, outcome, width),
+            }
+            lines.push(Line::default());
+        }
+        if lines.last().is_some_and(|line| line.spans.is_empty()) {
+            lines.pop();
+        }
+    }
+
+    // Chat convention: pin the newest lines to the bottom of the pane.
+    let max_lines = inner.height as usize;
+    let start = lines.len().saturating_sub(max_lines);
+    let visible: Vec<Line> = lines.into_iter().skip(start).collect();
+    frame.render_widget(Paragraph::new(visible), inner);
+}
+
+fn codex_prefix(lines: &mut Vec<Line<'static>>, spans: Vec<Span<'static>>) {
+    let mut row = vec![Span::styled("codex ", Style::default().fg(Color::LightGreen).bold())];
+    row.extend(spans);
+    lines.push(Line::from(row));
+}
+
+fn codex_outcome_lines(lines: &mut Vec<Line<'static>>, outcome: &CodexOutcome, width: usize) {
+    let green = Style::default().fg(Color::LightGreen);
+    let dim = Style::default().fg(Color::DarkGray);
+    let yellow = Style::default().fg(Color::Yellow);
+    let red = Style::default().fg(Color::Red);
+    let body = width.saturating_sub(9);
+    match outcome {
+        CodexOutcome::Created {
+            task_id,
+            status,
+            ceo_agent_id,
+            dispatch_error,
+        } => {
+            match dispatch_error.as_deref().filter(|err| !err.is_empty()) {
+                Some(err) => {
+                    codex_prefix(
+                        lines,
+                        vec![
+                            Span::styled(format!("Created {task_id}"), green.bold()),
+                            Span::styled(format!(" ({status})"), dim),
+                        ],
+                    );
+                    codex_prefix(
+                        lines,
+                        vec![Span::styled(
+                            format!("dispatch failed: {err} — task stays queued"),
+                            red,
+                        )],
+                    );
+                }
+                None => {
+                    let mut spans = vec![
+                        Span::styled(format!("Created {task_id}"), green.bold()),
+                        Span::styled(format!(" ({status})"), dim),
+                    ];
+                    if let Some(ceo) = ceo_agent_id.as_deref().filter(|id| !id.is_empty()) {
+                        spans.push(Span::styled(
+                            format!(" → ceo {}", truncate_chars(ceo, 8)),
+                            dim,
+                        ));
+                    }
+                    codex_prefix(lines, spans);
+                }
+            }
+        }
+        CodexOutcome::Continued { task_id, delivered } => {
+            if *delivered {
+                codex_prefix(
+                    lines,
+                    vec![
+                        Span::styled(format!("Sent to CEO of {task_id}"), green.bold()),
+                        Span::styled(" — message delivered", dim),
+                    ],
+                );
+            } else {
+                codex_prefix(
+                    lines,
+                    vec![
+                        Span::styled(format!("Queued for {task_id}"), yellow.bold()),
+                        Span::styled(" — CEO busy, follow-up will be delivered", dim),
+                    ],
+                );
+            }
+        }
+        CodexOutcome::Ask { question, candidates } => {
+            for wrapped in wrap_text(question, body) {
+                codex_prefix(lines, vec![Span::styled(wrapped, yellow)]);
+            }
+            for (index, candidate) in candidates.iter().enumerate() {
+                lines.push(Line::from(vec![
+                    Span::raw("      "),
+                    Span::styled(format!("{}) ", index + 1), yellow.bold()),
+                    Span::styled(
+                        format!("{:<9}", truncate_chars(&candidate.task_id, 8)),
+                        Style::default().fg(Color::Cyan).bold(),
+                    ),
+                    Span::styled(
+                        truncate_chars(&candidate.title, body.saturating_sub(12)),
+                        Style::default().fg(Color::White),
+                    ),
+                ]));
+            }
+            lines.push(Line::from(vec![
+                Span::raw("      "),
+                Span::styled(
+                    "press 1–9 to answer · Esc to dismiss · or retype with @TASK-id",
+                    dim,
+                ),
+            ]));
+        }
+        CodexOutcome::Failed(detail) => {
+            for wrapped in wrap_text(detail, body) {
+                codex_prefix(lines, vec![Span::styled(wrapped, red)]);
+            }
+        }
+        CodexOutcome::DryRun { action, confidence } => {
+            codex_prefix(
+                lines,
+                vec![Span::styled(
+                    format!("dry-run: {action} (confidence {confidence:.2})"),
+                    dim,
+                )],
+            );
+        }
+        CodexOutcome::Other(detail) => {
+            codex_prefix(lines, vec![Span::styled(detail.clone(), dim)]);
+        }
+    }
+}
+
 // -- Composer / footer -------------------------------------------------------
 
 fn render_composer(frame: &mut Frame, area: Rect, app: &App) {
@@ -2335,12 +2693,14 @@ fn render_composer(frame: &mut Frame, area: Rect, app: &App) {
             ),
         ])
     } else if app.composer_text.is_empty() {
+        let hint = if app.active_section() == CODEX_SECTION {
+            "message Codex — plain language, or @TASK-id to bypass"
+        } else {
+            "type a task, @N to message, /brief /inbox — Esc nav"
+        };
         Line::from(vec![
             Span::styled(" › ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                "type a task, @N to message, /brief /inbox — Esc nav",
-                Style::default().fg(Color::DarkGray),
-            ),
+            Span::styled(hint, Style::default().fg(Color::DarkGray)),
         ])
     } else {
         Line::from(vec![
@@ -2394,7 +2754,19 @@ fn render_pending_ask(frame: &mut Frame, area: Rect, ask: &PendingAsk) {
 }
 
 fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
-    let left = if area.width < 70 {
+    let left = if app.active_section() == CODEX_SECTION {
+        if area.width < 70 {
+            Line::from(vec![
+                Span::styled("Enter ", Style::default().fg(Color::LightGreen).bold()),
+                Span::raw("send · Esc nav · q quit"),
+            ])
+        } else {
+            Line::from(vec![
+                Span::styled("Enter ", Style::default().fg(Color::LightGreen).bold()),
+                Span::raw("send · Esc nav · 1–9 answer · @N direct · Tab input · q quit"),
+            ])
+        }
+    } else if area.width < 70 {
         Line::from(vec![
             Span::styled("n/p ", Style::default().fg(Color::LightGreen).bold()),
             Span::raw("sections · Tab composer · q quit"),
