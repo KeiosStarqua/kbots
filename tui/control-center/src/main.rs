@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-        KeyModifiers, MouseEventKind,
+        KeyModifiers, MouseButton, MouseEventKind,
     },
     execute,
 };
@@ -1084,12 +1084,39 @@ impl App {
         false
     }
 
+    /// Geometry of the "✕ exit codex" button on the Codex page: the top-right
+    /// border row of the pane (body starts below the 3-line header and the
+    /// optional banner).
+    fn codex_exit_button_rect(&self, width: u16) -> Rect {
+        let banner = u16::from(
+            self.connection == Connection::Connecting
+                || self.connection == Connection::Disconnected,
+        );
+        let button_width = 13;
+        Rect {
+            x: width.saturating_sub(button_width + 1),
+            y: 3 + banner,
+            width: button_width,
+            height: 1,
+        }
+    }
+
     fn handle_mouse(&mut self, kind: MouseEventKind, column: u16, row: u16, width: u16) {
-        // Codex page: the wheel drives the pty scrollback instead of sections.
+        // Codex page: the wheel drives the pty scrollback; a left click on the
+        // exit button leaves the page.
         if self.active_section() == CODEX_SECTION {
             match kind {
                 MouseEventKind::ScrollUp | MouseEventKind::ScrollLeft => self.scroll_codex(3),
                 MouseEventKind::ScrollDown | MouseEventKind::ScrollRight => self.scroll_codex(-3),
+                MouseEventKind::Down(MouseButton::Left) => {
+                    let button = self.codex_exit_button_rect(width);
+                    let hit = column >= button.x
+                        && column < button.x + button.width
+                        && row == button.y;
+                    if hit {
+                        self.selected = 1; // back to Overview
+                    }
+                }
                 _ => {}
             }
             return;
@@ -2405,6 +2432,26 @@ fn render_codex_section(frame: &mut Frame, area: Rect, app: &App) {
             );
         }
     }
+    // One-click exit: top-right corner of the pane border. Hit-tested in
+    // handle_mouse with the same geometry.
+    let button_width = 13;
+    let button_x = area.x + area.width.saturating_sub(button_width + 1);
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            " ✕ exit codex ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::LightGreen)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(Color::Rgb(20, 24, 22))),
+        Rect {
+            x: button_x,
+            y: area.y,
+            width: button_width,
+            height: 1,
+        },
+    );
 }
 
 fn render_composer(frame: &mut Frame, area: Rect, app: &App) {
