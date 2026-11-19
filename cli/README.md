@@ -25,6 +25,7 @@ kbots tasks update TASK-104 --status review --note "Ready for review"
 kbots agents list
 kbots agents list --project PRJ-1   # scope to one project when you have many
 kbots ag ls -p PRJ-1               # same, short form (alias: ag, ls, -p)
+kbots ag ls --all                  # include finished (stopped) agents in the Managed list
 # Inside a folder that has a `.agents/bot/` marker (a project kbots manages),
 # `ag ls` and `tasks ls` default to the current project — no --project needed.
 # Passing --project always wins; outside any project the unfiltered list is shown.
