@@ -51,18 +51,6 @@ pub fn socket_candidates() -> Vec<PathBuf> {
     candidates
 }
 
-/// Where the socket lives, in the contract's discovery order.
-/// Returns the first candidate that exists; otherwise the best guess so the
-/// error message names a useful path.
-pub fn discover_socket() -> Option<PathBuf> {
-    let candidates = socket_candidates();
-    candidates
-        .iter()
-        .find(|path| path.exists())
-        .cloned()
-        .or_else(|| candidates.into_iter().next())
-}
-
 #[derive(Debug)]
 pub enum RpcError {
     /// The socket could not be reached at all (daemon down, stale path).
