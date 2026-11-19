@@ -156,9 +156,6 @@ enum AgentCommands {
         /// Bot role to start.
         #[arg(value_parser = ["ceo", "git", "ops"])]
         role: String,
-        /// Runtime mode.
-        #[arg(long, value_enum, default_value_t = AgentMode::Terminal)]
-        mode: AgentMode,
         /// Project id, name, or path (defaults to the current directory).
         #[arg(long, short = 'p')]
         project: Option<String>,
@@ -168,29 +165,12 @@ enum AgentCommands {
     },
     /// Show one agent and probe its runtime.
     Show { bot_id: String },
-    /// Attach an hc terminal to a running headless agent (same session).
-    Attach { bot_id: String },
     /// Stop one agent (keeps its OpenCode session and history).
     Stop { bot_id: String },
     /// Send a prompt to one agent.
     Prompt { bot_id: String, text: String },
     /// Interrupt one agent's current run (keeps session and terminal).
     Interrupt { bot_id: String },
-}
-
-#[derive(Debug, Clone, clap::ValueEnum)]
-enum AgentMode {
-    Headless,
-    Terminal,
-}
-
-impl AgentMode {
-    fn as_str(&self) -> &'static str {
-        match self {
-            AgentMode::Headless => "headless",
-            AgentMode::Terminal => "terminal",
-        }
-    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -365,17 +345,10 @@ fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> 
             AgentCommands::List { project } => {
                 ("agents.list", json!({ "project": scoped_project(project) }))
             },
-            AgentCommands::Start {
-                role,
-                mode,
-                project,
-                fresh,
-            } => (
-                "agents.start",
-                json!({ "role": role, "mode": mode.as_str(), "project": project, "fresh": fresh }),
-            ),
+            AgentCommands::Start { role, project, fresh } => {
+            ("agents.start", json!({ "role": role, "project": project, "fresh": fresh }))
+        },
             AgentCommands::Show { bot_id } => ("agents.show", json!({ "botId": bot_id })),
-            AgentCommands::Attach { bot_id } => ("agents.attach", json!({ "botId": bot_id })),
             AgentCommands::Stop { bot_id } => ("agents.stop", json!({ "botId": bot_id })),
             AgentCommands::Prompt { bot_id, text } => {
                 ("agents.prompt", json!({ "botId": bot_id, "text": text }))

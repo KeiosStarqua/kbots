@@ -197,7 +197,7 @@ above. The v1 RPC surface includes:
 | `router.run` | AI router: natural-language request → `create_task`/`continue_task`/`ask_user`; deterministic `@TASK-id` bypass, bounded yolo-mode Codex turn otherwise (`danger-full-access`, `approvalPolicy: never`; owner's 2026-11-19 directive); executes via `tasks.create`/`tasks.message` |
 | `projects.register`, `projects.list`, `projects.get` | Project registry |
 | `agents.list` | Bot roles, runs, session identifiers, and managed bots (`managed`) |
-| `agents.start`, `agents.show`, `agents.stop`, `agents.interrupt`, `agents.prompt`, `agents.attach` | Managed bot lifecycle: exact session binding, terminal+headless modes, SQLite registry; `attach` upgrades a running headless agent to terminal mode on the same session |
+| `agents.start`, `agents.show`, `agents.stop`, `agents.interrupt`, `agents.prompt` | Managed bot lifecycle: exact session binding, hc-terminal mode only (headless retired 2026-11-19; legacy headless rows auto-close at reconcile), SQLite registry |
 | `approvals.list`, `approvals.approve` | Protected operation approvals |
 | `events.list` | Recent activity for the GUI |
 

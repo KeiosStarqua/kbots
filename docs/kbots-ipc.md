@@ -62,9 +62,8 @@ Initial CLI methods:
 | `agents list [--project REF]` | `agents.list` | `{}` or `{project}` — scopes items/managed/liveTerminals to one project (`filteredBy` set; `registeredProjects` remains the global count) |
 | `project watch [--project REF] [--off] [--interval N] [--debounce N] [--cooldown N] [--max-paths N]` | `watchers.set` | Enable/configure the daemon file-change watcher |
 | `project watch` (no `--project`) | `watchers.list` | `{}` — list configured watchers |
-| `agents start ROLE [--mode terminal\|headless] [--project REF] [--fresh]` | `agents.start` | `role`, optional `mode` (default `terminal`), optional `project`, optional `fresh` |
+| `agents start ROLE [--project REF] [--fresh]` | `agents.start` | `role`, optional `project`, optional `fresh` — agents are always hc terminals (headless retired) |
 | `agents show ID` | `agents.show` | `botId` |
-| `agents attach ID` | `agents.attach` | `botId` |
 | `agents stop ID` | `agents.stop` | `botId` |
 | `agents prompt ID TEXT` | `agents.prompt` | `botId`, `text` |
 | `agents interrupt ID` | `agents.interrupt` | `botId` |
@@ -88,10 +87,9 @@ Result shapes for the read and create methods:
 | `agents.list` | `{items: [{projectId?, projectPath, role, enabled, sessionID\|null, directory, registered, herdr?}], liveTerminals: [{address, agent?, name?, cwd, state?, status?, turn?, projectId?, role?}], filteredOut, registeredProjects, generatedAt, herdrUnavailable?, managed: [ManagedAgent]}` — `herdr` is attached on an exact role-directory match; `liveTerminals` is the read-only `hc ls` view, filtered to terminals inside registered project paths (`filteredOut` counts those hidden); `managed` lists every agent in the managed registry with its probed live status |
 | `agents.start` | ManagedAgent object: `{id, projectId, projectName?, role, mode, directory, status, sessionId, hcAddress, name, createdAt, updatedAt, stoppedAt, lastError?, live}` — idempotent while running; resumes the stopped agent's session |
 | `agents.show` | ManagedAgent object for one bot |
-| `agents.attach` | ManagedAgent object — spawns an hc terminal on the SAME OpenCode session (`opencode --session <id>`), flips `mode` headless → terminal, binds `hcAddress`; idempotent while a terminal is already bound |
 | `agents.stop` | `{id, projectId, role, mode, status, sessionId, stoppedAt, …}` — terminal is killed; the OpenCode session and history are kept |
 | `agents.prompt` | `{botId, mode, accepted, turn?}` — refuses unless the agent is idle (never `force`s past a blocked program) |
-| `agents.interrupt` | `{botId, mode, key?, outcome?}` — `terminal` mode: stop key (esc); `headless` mode: OpenCode session interrupt |
+| `agents.interrupt` | `{botId, mode, key?, outcome?}` — stop key (esc) to the hc terminal |
 | `watchers.set` | One watcher row: `{projectId, projectName?, projectPath?, enabled, intervalSeconds, debounceSeconds, cooldownSeconds, maxPaths, lastChangeAt, lastDeliveredAt}` — opt-in; `off` disables |
 | `watchers.list` | `{items: [watcher…]}` — all configured watchers |
 
@@ -152,7 +150,9 @@ the OpenCode session is created first via SDK with
 then spawns `opencode --session <sessionId>` in the role directory via the
 Herdr adapter (`hc run`), passing `kbotsBotId` as a label. The mapping
 `bot_id ↔ hc_address ↔ session_id ↔ directory` is written in SQLite right at
-spawn time. `headless` mode stops after the session creation.
+spawn time. All managed agents are hc terminals; the headless mode was
+retired on 2026-11-19 — existing headless rows are closed (marked `stopped`,
+sessions kept) automatically at daemon boot.
 
 Lifecycle states: `starting → running → stopping → stopped`, plus `error`.
 The partial-failure path is handled by compensation (a stray terminal is
@@ -165,15 +165,9 @@ disappeared, and marks broken sessions unreachable.
 One active agent per project+role at most (partial unique index). Stopping
 kills the terminal but keeps the OpenCode session and its history —
 `agents.start` later resumes the exact same session. `--fresh` starts a new
-one instead. `agents.attach` upgrades a running headless agent to terminal mode
-without touching the session: it spawns `opencode --session <sessionId>` in the
-role directory (same flags/labels as a terminal-mode start), binds the new
-`hcAddress`, and from then on reconcile treats the agent as terminal-bound.
-Attaching twice returns the existing binding; an `error` agent must be started
-fresh rather than attached. `prompt` refuses unless the agent is idle (they are never sent
-with `force`): terminal mode probes the `hc` status word, headless mode
-probes the session outcome; `interrupt` sends the stop key in terminal mode
-or interrupts the session in headless mode. Nothing deletes a session.
+one instead. `prompt` refuses unless the agent is idle (never `force`s past a
+blocked program): it probes the `hc` status word. `interrupt` sends the stop
+key (esc) to the terminal. Nothing deletes a session.
 Single-writer: all mutations flow through the daemon; the TUI/GUI render the
 same registry.
 
@@ -293,10 +287,9 @@ Notes:
   directories.
 - Each dispatched task gets its own OpenCode session created in that
   directory, with metadata `{kbotsBotId, kbotsTaskId, kbotsRole: "ceo",
-  kbotsProjectId}`. Mode `terminal` by default: dispatch spawns an `hc`
-  terminal running `opencode --session <id>` (same binding as a
-  terminal-mode `agents start`); the task CEO is always watchable and
-  steerable via `agents attach` semantics, never headless.
+  kbotsProjectId}`. Mode `terminal` always: dispatch spawns an `hc`
+  terminal running `opencode --session <id>`, so the task CEO is always
+  watchable and steerable (headless mode was retired 2026-11-19).
 - Per-project active-CEO cap, default 4; override with `KBOTS_CEO_CAP`.
   Over the cap the task stays `queued`, a `task.deferred` event is logged,
   and dispatch is retried by reconcile or the next action.
@@ -422,7 +415,7 @@ JSON-RPC `-32601`.
 
 Honest v1 semantics:
 
-- `agents.start/show/stop/attach/prompt/interrupt` manage bot agents through the
+- `agents.start/show/stop/prompt/interrupt` manage bot agents through the
   daemon (see "Managed agents" above). `agents.list` additionally returns
   them in `managed`.
 - `tasks.create` records the task (status `"planning"`) and logs an event.

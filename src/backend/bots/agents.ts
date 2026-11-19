@@ -62,7 +62,6 @@ const DEFERRED_RETRY_COOLDOWN_MS = 10 * 60 * 1000
 const deferredAttemptAt = new Map<string, number>()
 
 const MANAGED_ROLES: readonly AgentRole[] = ["ceo", "git", "ops"]
-const START_TIMEOUT_MS = 5 * 60 * 1000
 
 function roleParam(raw: unknown): AgentRole {
   const value = typeof raw === "string" ? raw.trim().toLowerCase() : ""
@@ -70,10 +69,9 @@ function roleParam(raw: unknown): AgentRole {
   throw invalidParams(`role must be one of ${MANAGED_ROLES.join(", ")}`)
 }
 
-function modeParam(raw: unknown): "headless" | "terminal" {
-  if (raw === undefined || raw === null) return "terminal"
-  if (raw === "headless" || raw === "terminal") return raw
-  throw invalidParams("mode must be 'headless' or 'terminal'")
+function modeParam(raw: unknown): "terminal" {
+  if (raw === undefined || raw === null || raw === "terminal") return "terminal"
+  throw invalidParams("headless mode has been removed; agents are spawned as hc terminals only")
 }
 
 function textParam(raw: unknown, maxLength = 8_000): string {
@@ -154,36 +152,6 @@ function managedPayload(
   }
 }
 
-/** Format a session time value (DateTimeUtc/ISO string/epoch) as ISO; undefined when absent/unreadable. */
-function isoTime(value: unknown): string | undefined {
-  if (value === null || value === undefined) return undefined
-  if (value instanceof Date) return Number.isNaN(value.getTime()) ? undefined : value.toISOString()
-  if (typeof value === "string") return value.length > 0 ? value : undefined
-  const epoch = typeof value === "number" ? value : undefined
-  if (epoch !== undefined && Number.isFinite(epoch)) return new Date(epoch).toISOString()
-  if (typeof value === "object") {
-    const record = value as Record<string, unknown>
-    const toDate = record.toDate
-    if (typeof toDate === "function") {
-      try {
-        const date = (toDate as () => Date).call(value)
-        return date instanceof Date && !Number.isNaN(date.getTime()) ? date.toISOString() : undefined
-      } catch {
-        return undefined
-      }
-    }
-    const millis = typeof record.epochMillis === "number" ? record.epochMillis
-      : typeof record.millis === "number" ? record.millis
-      : undefined
-    if (millis !== undefined && Number.isFinite(millis)) return new Date(millis).toISOString()
-  }
-  return undefined
-}
-
-function numberOrUndefined(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined
-}
-
 /** Probe the runtime backing an agent; never throws. */
 export async function probeAgent(agent: AgentRow): Promise<Record<string, unknown> | null> {
   try {
@@ -199,34 +167,9 @@ export async function probeAgent(agent: AgentRow): Promise<Record<string, unknow
         reason: terminal.reason,
       }
     }
-    if (!agent.sessionId) return { outcome: "missing" }
-    const { client } = await makeOpencodeClient()
-    const session = await client.session.get({ sessionID: agent.sessionId })
-    const sessionRecord =
-      session && typeof session === "object" ? (session as Record<string, unknown>) : null
-    const outcome = sessionRecord && "outcome" in sessionRecord ? sessionRecord.outcome : undefined
-    const result: Record<string, unknown> = {
-      outcome: typeof outcome === "string" ? outcome : "unknown",
-    }
-    const tokens =
-      sessionRecord && typeof sessionRecord.tokens === "object" && sessionRecord.tokens !== null
-        ? (sessionRecord.tokens as Record<string, unknown>)
-        : null
-    if (tokens) {
-      result.tokens = {
-        input: numberOrUndefined(tokens.input) ?? 0,
-        output: numberOrUndefined(tokens.output) ?? 0,
-      }
-    }
-    const time =
-      sessionRecord && typeof sessionRecord.time === "object" && sessionRecord.time !== null
-        ? (sessionRecord.time as Record<string, unknown>)
-        : null
-    const updatedAt = isoTime(time?.updated)
-    const idleAt = isoTime(time?.idle)
-    if (updatedAt !== undefined) result.updatedAt = updatedAt
-    if (idleAt !== undefined) result.idleAt = idleAt
-    return result
+    // Legacy headless rows (retired mode): report the last recorded outcome,
+    // never call OpenCode — those agents are swept to `stopped` at reconcile.
+    return { outcome: agent.lastOutcome ?? "unknown", legacy: true }
   } catch {
     return null
   }
@@ -359,60 +302,6 @@ export async function agentsStartHandler(params: Record<string, unknown>): Promi
   }
 }
 
-/**
- * Attach an hc terminal to an already-running headless agent, on the SAME
- * OpenCode session (`opencode --session <id>` in the agent's directory).
- * The registry flips mode headless → terminal; from then on reconcile
- * treats it like any terminal-bound agent. Idempotent while attached.
- */
-export async function agentsAttachHandler(params: Record<string, unknown>): Promise<Record<string, unknown>> {
-  await reconcileAgents()
-  const agent = mustGetAgent(params)
-  const project = getProject(agent.projectId)
-  if (agent.mode === "terminal" && agent.hcAddress) {
-    return managedPayload(agent, await probeAgent(agent), project?.name)
-  }
-  if (!agent.sessionId) {
-    throw invalidParams(`agent ${agent.id} has no session to attach`)
-  }
-  if (agent.status === "stopped" || agent.status === "stopping") {
-    throw invalidParams(`agent ${agent.id} is ${agent.status}; start it first`)
-  }
-  if (agent.status === "error") {
-    throw invalidParams(
-      `agent ${agent.id} is in error (${agent.lastError ?? "unknown"}); start it fresh instead of attaching`,
-    )
-  }
-  if (!project) {
-    throw new RpcError(-32602, `agent ${agent.id} references unknown project: ${agent.projectId}`)
-  }
-  const spawned = await spawnTerminal(agent, project.path, project.name, agent.sessionId)
-  // Lost update race (another attach wrote hcAddress in between): kill our
-  // extra terminal rather than leak it.
-  const current = getAgent(agent.id)
-  if (current?.hcAddress && current.hcAddress !== spawned.address) {
-    try {
-      await killTerminal(spawned.address)
-    } catch {
-      // best effort
-    }
-    return managedPayload(current, await probeAgent(current), project.name)
-  }
-  const updated = updateAgent(agent.id, {
-    mode: "terminal",
-    hcAddress: spawned.address,
-    name: spawned.name ?? agent.name,
-    status: "running",
-    lastError: null,
-  })!
-  addEvent(
-    "bot.attached",
-    `Agent ${agent.id} attached to terminal ${spawned.address} (session ${agent.sessionId})`,
-    { agentId: agent.id, hcAddress: spawned.address, sessionId: updated.sessionId },
-  )
-  return managedPayload(updated, await probeAgent(updated), project.name)
-}
-
 export async function agentsStopHandler(params: Record<string, unknown>): Promise<Record<string, unknown>> {
   await reconcileAgents()
   let agent = mustGetAgent(params)
@@ -464,16 +353,7 @@ export async function agentsInterruptHandler(params: Record<string, unknown>): P
     })
     return { botId: agent.id, mode: agent.mode, ...outcome }
   }
-  if (!agent.sessionId) throw invalidParams(`agent ${agent.id} has no session yet`)
-  const { client } = await makeOpencodeClient()
-  try {
-    await client.session.interrupt({ sessionID: agent.sessionId, resume: false })
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    throw new RpcError(-32603, `interrupt failed: ${message}`)
-  }
-  addEvent("bot.interrupted", `Agent ${agent.id} interrupted`, { agentId: agent.id, mode: "headless" })
-  return { botId: agent.id, mode: agent.mode, outcome: "stopped" }
+  throw invalidParams("headless mode has been retired; only hc terminals can be interrupted")
 }
 
 /**
@@ -509,30 +389,7 @@ export async function promptAgentCore(agent: AgentRow, text: string): Promise<Re
     }
   }
 
-  if (!agent.sessionId) throw invalidParams(`agent ${agent.id} has no session yet`)
-  const { client } = await makeOpencodeClient()
-  let session: unknown
-  try {
-    session = await client.session.get({ sessionID: agent.sessionId })
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    throw new RpcError(-32603, `session unreachable: ${message}`)
-  }
-  const outcome =
-    session && typeof session === "object" && "outcome" in session
-      ? String((session as { outcome?: unknown }).outcome ?? "")
-      : ""
-  if (/blocked|permission|question/i.test(outcome)) {
-    throw invalidParams(`agent ${agent.id} session is ${outcome}; refusing to prompt until it is idle`)
-  }
-  try {
-    await client.session.prompt({ sessionID: agent.sessionId, text })
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    throw new RpcError(-32603, `prompt failed: ${message}`)
-  }
-  addEvent("bot.prompted", `Agent ${agent.id} prompted (${text.length} chars)`, { agentId: agent.id, textLength: text.length })
-  return { botId: agent.id, mode: agent.mode, accepted: true }
+  throw invalidParams("headless mode has been retired; only hc terminals can be prompted")
 }
 
 export async function agentsPromptHandler(params: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -596,37 +453,20 @@ export async function reconcileAgents(): Promise<{ checked: number; changed: num
           changed += 1
         }
       } else {
-        if (!agent.sessionId) {
-          updateAgent(agent.id, { status: "error", lastError: "headless agent has no session" })
-          if (ceoTaskId) {
-            addEvent("bot.reconcile", `Agent ${agent.id} has no session (crash during spawn?)`, { agentId: agent.id, taskId: ceoTaskId })
-          }
-          changed += 1
-          continue
-        }
-        // Crash between dispatch phases: still `starting` long after the RPC
-        // should have moved the row to running. The dispatcher normally does
-        // this in-process, so this only fires on a daemon restart/crash.
-        if (agent.status === "starting" && Date.now() - Date.parse(agent.updatedAt) > START_TIMEOUT_MS) {
-          updateAgent(agent.id, { status: "error", lastError: "session timed out before first run" })
-          addEvent("agent.start_timeout", `Agent ${agent.id} session timed out before first run`, { agentId: agent.id, ...(ceoTaskId ? { taskId: ceoTaskId } : {}) })
-          changed += 1
-          continue
-        }
-        const probe = await probeAgent(agent)
-        const probedAt = new Date().toISOString()
-        if (probe) {
-          const outcome = typeof probe.outcome === "string" ? probe.outcome : "unknown"
-          updateAgent(agent.id, {
-            lastOutcome: outcome,
-            lastOutcomeAt: probedAt,
-            ...(agent.status !== "running" ? { status: "running" } : {}),
-          })
-        } else {
-          updateAgent(agent.id, { status: "error", lastError: "session unreachable", lastOutcome: "unreachable", lastOutcomeAt: probedAt })
-          addEvent("bot.reconcile", `Agent ${agent.id} session unreachable`, { agentId: agent.id, ...(ceoTaskId ? { taskId: ceoTaskId } : {}) })
-          changed += 1
-        }
+        // Legacy headless rows (retired 2026-11-19): do not probe OpenCode,
+        // do not spawn terminals, do not prompt. Auto-close them so old
+        // kbots setups clear themselves at boot; sessions stay untouched.
+        updateAgent(agent.id, {
+          status: "stopped",
+          stoppedAt: new Date().toISOString(),
+          lastError: null,
+        })
+        addEvent(
+          "agent.legacy_headless_closed",
+          `Agent ${agent.id} closed by legacy headless retirement (session kept)`,
+          { agentId: agent.id, sessionId: agent.sessionId, ...(ceoTaskId ? { taskId: ceoTaskId } : {}) },
+        )
+        changed += 1
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

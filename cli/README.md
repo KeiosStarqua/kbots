@@ -30,8 +30,8 @@ kbots ag ls -p PRJ-1               # same, short form (alias: ag, ls, -p)
 # Passing --project always wins; outside any project the unfiltered list is shown.
 kbots prj ls          # `prj` for `project`, `ls` for `list`
 kbots prj watch --project PRJ-1
-kbots agents start git --mode terminal
-kbots agents start ops --mode headless --project api-service
+kbots agents start git
+kbots agents start ops --project api-service
 kbots agents show AGT-1
 kbots agents prompt AGT-1 "Review PR #42"
 kbots agents interrupt AGT-1
@@ -70,8 +70,8 @@ bots — spawned and tracked by the daemon with exact session binding — are st
 driven with:
 
 ```sh
-kbots agents start git --mode terminal          # or --mode headless
-kbots agents start git --mode headless --fresh  # new session instead of resuming
+kbots agents start git                           # hc terminal, same as default for task CEOs
+kbots agents start git --fresh                  # new session instead of resuming
 kbots agents show AGT-1
 kbots agents prompt AGT-1 "Review PR #42"
 kbots agents interrupt AGT-1                    # esc, session kept
@@ -92,9 +92,9 @@ quiet and the git agent is idle, prompts it with the changed paths — the bot
 then reviews/acts per its project instructions. The daemon never commits or
 pushes on its own.
 
-Terminal mode spawns `opencode --session <id>` inside the role directory in a
-Herdr-managed terminal; headless mode talks to the registered OpenCode service
-only. Prompts are refused unless the agent is idle; `stop` keeps the OpenCode
+`agents start` spawns `opencode --session <id>` inside the role directory in a
+Herdr-managed terminal (the only mode; headless was retired 2026-11-19).
+Prompts are refused unless the agent is idle; `stop` keeps the OpenCode
 session and history, `start` resumes the same session.
 
 Use `--socket PATH` or `KBOTS_SOCKET` to select the daemon socket. By default,

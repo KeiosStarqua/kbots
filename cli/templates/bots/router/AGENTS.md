@@ -55,7 +55,7 @@ planned):
 8. Do NOT commit, push, or deploy anything as part of setup. The git bot
    integrates; ops deploys with the owner's authorization. If the owner
    expects agents to start, they decide explicitly:
-   `kb ag start ceo|git|ops --mode terminal|headless`.
+   `kb ag start ceo|git|ops`.
 
 Caveat: repos like kt-system already run a bespoke bot fleet (CEO/git/ops +
 its own watch/queue system). Adding kbots there means a second, parallel
