@@ -44,7 +44,8 @@ kbots project list
 kbots project show PROJECT-ID
 kbots project watch --project PRJ-1   # prompt the git bot on file changes
 kbots approve DEPLOY-23
-kbots tui
+kbots tui                              # minimal Codex-only terminal (default)
+kbots tui --full                       # full 7-section operator dashboard
 kbots gui
 ```
 

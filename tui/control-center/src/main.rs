@@ -92,6 +92,14 @@ fn fetch_snapshot(client: &RpcClient) -> Snapshot {
 // UI state
 // ---------------------------------------------------------------------------
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// Default: only the embedded Codex terminal with a minimal header.
+    Simple,
+    /// `--full`: the complete 7-section operator dashboard.
+    Full,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Connection {
     Connecting,
@@ -169,6 +177,7 @@ struct TaskDetailView {
 }
 
 struct App {
+    mode: Mode,
     // navigation (kept from the original TUI)
     selected: usize,
     prefix_pending: bool,
@@ -207,12 +216,15 @@ struct App {
     codex_spawn_error: Option<String>,
     /// Keys of terminals whose process has exited (screen stays visible).
     codex_exited: Vec<String>,
+    /// Set by mouse-click exit in Simple mode; checked by the frame loop.
+    quit: bool,
 }
 
 impl App {
-    fn new() -> Self {
+    fn new(mode: Mode) -> Self {
         let (bg_tx, bg_rx) = mpsc::channel();
         Self {
+            mode,
             selected: 0,
             prefix_pending: false,
             navigator_preview: None,
@@ -245,6 +257,7 @@ impl App {
             codex_binding: None,
             codex_spawn_error: None,
             codex_exited: Vec::new(),
+            quit: false,
         }
     }
 
@@ -966,6 +979,9 @@ impl App {
                 // crossterm decodes 0x1D (Ctrl+]) as Char('5')+CONTROL on
                 // unix terminals; accept both spellings.
                 KeyCode::Char(']') | KeyCode::Char('5') if control => {
+                    if self.mode == Mode::Simple {
+                        return true; // quit the TUI
+                    }
                     self.selected = 1; // back to Overview
                     return false;
                 }
@@ -1088,14 +1104,18 @@ impl App {
     /// border row of the pane (body starts below the 3-line header and the
     /// optional banner).
     fn codex_exit_button_rect(&self, width: u16) -> Rect {
-        let banner = u16::from(
-            self.connection == Connection::Connecting
-                || self.connection == Connection::Disconnected,
-        );
         let button_width = 13;
+        let y = if self.mode == Mode::Simple {
+            0
+        } else {
+            3 + u16::from(
+                self.connection == Connection::Connecting
+                    || self.connection == Connection::Disconnected,
+            )
+        };
         Rect {
             x: width.saturating_sub(button_width + 1),
-            y: 3 + banner,
+            y,
             width: button_width,
             height: 1,
         }
@@ -1104,7 +1124,7 @@ impl App {
     fn handle_mouse(&mut self, kind: MouseEventKind, column: u16, row: u16, width: u16) {
         // Codex page: the wheel drives the pty scrollback; a left click on the
         // exit button leaves the page.
-        if self.active_section() == CODEX_SECTION {
+        if self.mode == Mode::Simple || self.active_section() == CODEX_SECTION {
             match kind {
                 MouseEventKind::ScrollUp | MouseEventKind::ScrollLeft => self.scroll_codex(3),
                 MouseEventKind::ScrollDown | MouseEventKind::ScrollRight => self.scroll_codex(-3),
@@ -1114,7 +1134,14 @@ impl App {
                         && column < button.x + button.width
                         && row == button.y;
                     if hit {
-                        self.selected = 1; // back to Overview
+                        if self.mode == Mode::Simple {
+                            // Simple layout has no other page: ✕ quits the TUI.
+                            // We can't return true from here, so emulate quit
+                            // via the quit flag below.
+                            self.quit = true;
+                        } else {
+                            self.selected = 1; // back to Overview
+                        }
                     }
                 }
                 _ => {}
@@ -1286,8 +1313,37 @@ impl Drop for MouseCaptureGuard {
     }
 }
 
+fn parse_mode() -> Result<Mode, String> {
+    let mut mode = Mode::Simple;
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "--simple" | "-s" => mode = Mode::Simple,
+            "--full" | "-f" => mode = Mode::Full,
+            "--help" | "-h" => {
+                println!("kbots-tui — minimal Codex chat terminal");
+                println!();
+                println!("USAGE: kbots-tui [--simple|--full]");
+                println!();
+                println!("  (default)   Simple layout: just the embedded Codex terminal,");
+                println!("              a one-line header and a ✕ exit button (or Ctrl+]).");
+                println!("  --full      The complete 7-section operator dashboard.");
+                std::process::exit(0);
+            }
+            other => return Err(format!("unknown argument: {other} (try --help)")),
+        }
+    }
+    Ok(mode)
+}
+
 fn main() -> io::Result<()> {
-    let mut app = App::new();
+    let mode = match parse_mode() {
+        Ok(mode) => mode,
+        Err(message) => {
+            eprintln!("kbots-tui: {message}");
+            std::process::exit(2);
+        }
+    };
+    let mut app = App::new(mode);
     ratatui::run(|terminal| {
         let _mouse_capture = MouseCaptureGuard::enable()?;
         let mut needs_draw = true;
@@ -1331,6 +1387,9 @@ fn main() -> io::Result<()> {
                             mouse.row,
                             terminal.size()?.width,
                         );
+                        if app.quit {
+                            break Ok(());
+                        }
                         needs_draw = true;
                     }
                     Event::Resize(_, _) => needs_draw = true,
@@ -1349,6 +1408,9 @@ fn main() -> io::Result<()> {
 // ---------------------------------------------------------------------------
 
 fn render(frame: &mut Frame, app: &App) {
+    if app.mode == Mode::Simple {
+        return render_simple(frame, app);
+    }
     let area = frame.area();
     let banner = disconnected_banner(app);
     let codex_active = app.active_section() == CODEX_SECTION;
@@ -1468,6 +1530,43 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App) {
             .border_style(Style::default().fg(Color::DarkGray)),
     );
     frame.render_widget(header, area);
+}
+
+/// Simple layout (default): a one-line header and a fullscreen Codex
+/// terminal with a one-click exit button. Nothing else.
+fn render_simple(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(area);
+    let live = match app.connection {
+        Connection::Online => Span::styled(" LIVE ", Style::default().fg(Color::Black).bg(Color::Green).bold()),
+        Connection::Connecting => Span::styled(" … ", Style::default().fg(Color::Black).bg(Color::Yellow).bold()),
+        Connection::Disconnected => Span::styled(" OFFLINE ", Style::default().fg(Color::White).bg(Color::Red).bold()),
+    };
+    let line = Line::from(vec![
+        Span::styled(" kbots ", Style::default().fg(Color::Black).bg(Color::Green).bold()),
+        Span::raw(" "),
+        Span::styled("CODEX", Style::default().fg(Color::White).bold()),
+        Span::raw("  "),
+        live,
+        Span::raw("  · Ctrl+] to quit"),
+    ]);
+    frame.render_widget(
+        Paragraph::new(line).style(Style::default().bg(Color::Rgb(20, 24, 22))),
+        chunks[0],
+    );
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            " ✕ exit ",
+            Style::default().fg(Color::Black).bg(Color::LightGreen).add_modifier(Modifier::BOLD),
+        ))
+        .alignment(Alignment::Right)
+        .style(Style::default().bg(Color::Rgb(20, 24, 22))),
+        chunks[0],
+    );
+    render_codex_section(frame, chunks[1], app);
 }
 
 fn render_body(frame: &mut Frame, area: Rect, app: &App) {
@@ -2431,6 +2530,9 @@ fn render_codex_section(frame: &mut Frame, area: Rect, app: &App) {
                 area,
             );
         }
+    }
+    if app.mode == Mode::Simple {
+        return;
     }
     // One-click exit: top-right corner of the pane border. Hit-tested in
     // handle_mouse with the same geometry.

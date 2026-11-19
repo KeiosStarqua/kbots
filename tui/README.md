@@ -4,6 +4,12 @@
 keyboard input. It is designed to run inside Herdr, tmux, SSH, or Mosh; exiting
 the UI restores the terminal and does not stop the backend or its agents.
 
+The default TUI is a minimal Codex chat terminal: a one-line header
+(`kbots · CODEX · LIVE/OFFLINE`) with a `✕ exit` button (or `Ctrl+]`) to quit,
+and a fullscreen embedded Codex CLI below it — no other pages. `kb tui --full`
+(or `--full` on `kbots-tui`) opens the complete operator dashboard described
+below instead.
+
 The dashboard connects to the kbots daemon over its local Unix socket
 (JSON-RPC 2.0, one request per connection; discovery order `KBOTS_SOCKET` →
 `$XDG_RUNTIME_DIR/kbots.sock` → `$HOME/.local/run/kbots.sock`). It renders
@@ -14,7 +20,7 @@ project (plus `herdr` state and `liveTerminals`), pending Approvals, and the
 Activity log (`events.list`, newest first). Section navigation supports
 arrows, `h/j/k/l`, `n/p`, and `1`–`7`.
 
-The Codex page (section 1) is a real interactive Codex CLI running in an
+The Codex page (section 1 of the Full layout) is a real interactive Codex CLI running in an
 embedded pseudo-terminal (`portable-pty` → `vt100` → `tui-term`), spawned as
 `codex --sandbox workspace-write --ask-for-approval on-request`, running
 with its cwd inside the project's `.agents/bot/router/` folder (the task-router

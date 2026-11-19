@@ -66,8 +66,12 @@ enum Commands {
     },
     /// Open the Slint desktop control center.
     Gui,
-    /// Open the Ratatui terminal control center.
-    Tui,
+    /// Open the Ratatui terminal control center (simple Codex layout by default).
+    Tui {
+        /// Open the full 7-section operator dashboard instead of the minimal Codex-only layout.
+        #[arg(long)]
+        full: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -240,8 +244,8 @@ fn main() {
 
 fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
     match cli.command {
-        Commands::Gui => run_ui("KBOTS_GUI_BIN", "kbots-gui"),
-        Commands::Tui => run_ui("KBOTS_TUI_BIN", "kbots-tui"),
+        Commands::Gui => run_ui("KBOTS_GUI_BIN", "kbots-gui", None),
+        Commands::Tui { full } => run_ui("KBOTS_TUI_BIN", "kbots-tui", full.then_some("--full")),
         Commands::Project {
             command: ProjectCommands::Configure { path, overwrite },
         } => {
@@ -390,7 +394,7 @@ fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> 
         Commands::Approve { approval_id } => {
             ("approvals.approve", json!({ "approvalId": approval_id }))
         }
-        Commands::Gui | Commands::Tui => unreachable!("UI commands are handled before RPC"),
+        Commands::Gui | Commands::Tui { .. } => unreachable!("UI commands are handled before RPC"),
     };
     Ok(request)
 }
@@ -555,7 +559,7 @@ fn request(
     Err("the kbots daemon currently uses Unix domain sockets and requires a Unix host".into())
 }
 
-fn run_ui(env_name: &str, binary_name: &str) -> Result<(), Box<dyn Error>> {
+fn run_ui(env_name: &str, binary_name: &str, arg: Option<&str>) -> Result<(), Box<dyn Error>> {
     let executable = env::var_os(env_name).map(PathBuf::from).unwrap_or_else(|| {
         env::current_exe()
             .ok()
@@ -563,7 +567,11 @@ fn run_ui(env_name: &str, binary_name: &str) -> Result<(), Box<dyn Error>> {
             .filter(|path| path.is_file())
             .unwrap_or_else(|| PathBuf::from(binary_name))
     });
-    let status = Command::new(&executable).status().map_err(|error| {
+    let mut command = Command::new(&executable);
+    if let Some(arg) = arg {
+        command.arg(arg);
+    }
+    let status = command.status().map_err(|error| {
         io::Error::other(format!(
             "cannot start {} at {}: {error}",
             binary_name,

@@ -60,8 +60,11 @@ Start the terminal dashboard in Herdr, tmux, SSH, or Mosh with:
 cargo run --manifest-path tui/control-center/Cargo.toml
 ```
 
-The TUI adapts to narrow terminal widths and uses arrow keys or `h`/`j`/`k`/`l`
-to navigate, `1`–`6` to jump to a section, and `q` or `Esc` to exit. The CLI can
+By default the TUI is a minimal Codex chat terminal: one fullscreen embedded
+Codex CLI (`codex --sandbox workspace-write --ask-for-approval on-request`)
+plus a one-line header (`kbots · CODEX · LIVE`) and a `✕ exit` button (or
+`Ctrl+]`) to quit. `kb tui --full` opens the complete operator dashboard
+(Overview, Projects, Tasks, Agents, Approvals, Activity log). The CLI can
 launch either UI and defines automation commands for status, tasks, projects,
 agents, and approvals. Until the daemon is running, those API commands return
 a clear socket connection error.
