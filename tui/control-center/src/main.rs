@@ -664,17 +664,39 @@ impl App {
     }
 
     /// Walk from `start` up to (and including) the enclosing git root and
-    /// return the `.agents/bot/router` folder found there, if any. Never
-    /// escapes the repository.
-    fn find_router_dir(start: &Path) -> Option<PathBuf> {
+    /// return the git root plus the `.agents/bot/router` folder when it
+    /// exists there. Never escapes the repository.
+    fn find_router_dir(start: &Path) -> Option<(PathBuf, PathBuf)> {
         let mut dir = start.to_path_buf();
         loop {
             let candidate = dir.join(".agents").join("bot").join("router");
             if candidate.is_dir() {
-                return Some(candidate);
+                return Some((dir, candidate));
             }
             let at_git_root = dir.join(".git").is_dir() || dir.join(".git").is_file();
             if at_git_root || !dir.pop() {
+                return None;
+            }
+        }
+    }
+
+    /// Locate the router folder for `start`; when missing, create it from
+    /// the embedded template (same as `kb project sync` for this role).
+    fn resolve_or_scaffold_router(start: &Path) -> Option<PathBuf> {
+        if let Some((_, router)) = Self::find_router_dir(start) {
+            return Some(router);
+        }
+        // No router folder yet. Scaffold one at the enclosing git root.
+        let mut dir = start.to_path_buf();
+        loop {
+            let at_git_root = dir.join(".git").is_dir() || dir.join(".git").is_file();
+            if at_git_root {
+                match codex_term::scaffold_router_folder(&dir) {
+                    Ok(created) => return Some(created),
+                    Err(_) => return None,
+                }
+            }
+            if !dir.pop() {
                 return None;
             }
         }
@@ -692,11 +714,11 @@ impl App {
             .unwrap_or_else(|| {
                 std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
             });
-        if let Some(found) = Self::find_router_dir(&project_root) {
+        if let Some(found) = Self::resolve_or_scaffold_router(&project_root) {
             return found;
         }
         if let Ok(cwd) = std::env::current_dir()
-            && let Some(found) = Self::find_router_dir(&cwd)
+            && let Some(found) = Self::resolve_or_scaffold_router(&cwd)
         {
             return found;
         }

@@ -20,6 +20,8 @@ use std::{
     thread,
 };
 
+use std::path::PathBuf;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
@@ -33,6 +35,23 @@ use tui_term::{
 
 /// Number of scrollback lines kept per embedded terminal.
 const SCROLLBACK_LINES: usize = 1_000;
+
+/// Starter instructions for a project's embedded Codex task-router (kept
+/// in sync with `cli/templates/bots/router/AGENTS.md`; this is the same
+/// file embedded into the CLI).
+const ROUTER_TEMPLATE: &str = include_str!("../../../cli/templates/bots/router/AGENTS.md");
+
+/// Create `<root>/.agents/bot/router/AGENTS.md` from the embedded template
+/// when missing. Idempotent and never overwrites an existing file.
+pub fn scaffold_router_folder(git_root: &Path) -> io::Result<PathBuf> {
+    let dir = git_root.join(".agents").join("bot").join("router");
+    std::fs::create_dir_all(&dir)?;
+    let agents = dir.join("AGENTS.md");
+    if !agents.exists() {
+        std::fs::write(&agents, ROUTER_TEMPLATE)?;
+    }
+    Ok(dir)
+}
 
 pub struct CodexTerm {
     master: Box<dyn portable_pty::MasterPty + Send>,

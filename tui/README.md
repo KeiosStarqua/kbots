@@ -24,8 +24,10 @@ The Codex page (section 1 of the Full layout) is a real interactive Codex CLI ru
 embedded pseudo-terminal (`portable-pty` → `vt100` → `tui-term`), spawned as
 `codex --sandbox workspace-write --ask-for-approval on-request`, running
 with its cwd inside the project's `.agents/bot/router/` folder (the task-router
-instructions for Codex) when that folder exists, falling back to the project
-root otherwise. Every key
+instructions for Codex). When the folder is missing, it is scaffolded from the
+embedded template automatically (identical to `kb project sync`; never
+overwrites existing files); if scaffolding fails, the terminal falls back to
+the project root. Every key
 except the host chord `Ctrl+]` goes to Codex; `Ctrl+]` returns to Overview.
 The terminal is bound to "free" or to an open task: `Ctrl+←`/`Ctrl+→` cycle
 the binding, one pty per bound task is kept alive in memory (switching back
