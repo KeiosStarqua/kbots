@@ -3,7 +3,9 @@
 ## Purpose and status
 
 `kbots` is a local coding workflow orchestrator. Its intended runtime has one
-long-lived Bun daemon that owns project/workflow state and OpenCode sessions,
+long-lived Bun daemon that owns project/workflow state and OpenCode sessions
+(with an auto-kick nudge loop for idle task CEOs that have not marked their
+task done),
 with Rust command-line, desktop, and terminal clients. The repository currently
 contains the OpenCode smoke/control utilities, the v1 workflow daemon extended
 with the v2 task-centric dispatch surface (`docs/kbots-ipc.md`, "v2 methods":
