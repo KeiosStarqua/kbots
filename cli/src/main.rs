@@ -150,6 +150,9 @@ enum AgentCommands {
         /// Only show this project (id, name, or path).
         #[arg(long, short = 'p')]
         project: Option<String>,
+        /// Also list finished (stopped) agents; hidden by default.
+        #[arg(long)]
+        all: bool,
     },
     /// Start (or resume) a bot agent for a registered project.
     Start {
@@ -280,7 +283,9 @@ fn emit(method: &str, value: &Value, force_json: bool) {
         print_json(value);
         return;
     }
-    match render::render(method, value) {
+    // `--all` is the render hint to expand collapsed finished groups (agents.list)
+    let show_finished = std::env::args().any(|arg| arg == "--all");
+    match render::render(method, value, show_finished) {
         Some(text) => println!("{text}"),
         None => print_json(value),
     }
@@ -342,7 +347,7 @@ fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> 
             }
         },
         Commands::Agents { command } => match command {
-            AgentCommands::List { project } => {
+            AgentCommands::List { project, .. } => {
                 ("agents.list", json!({ "project": scoped_project(project) }))
             },
             AgentCommands::Start { role, project, fresh } => {
@@ -438,7 +443,7 @@ fn run_sessions_start(directory: Option<PathBuf>, force_json: bool) -> Result<()
     }
     match serde_json::from_str::<Value>(stdout.trim())
         .ok()
-        .and_then(|value| render::render("internal.sessions.start", &value))
+        .and_then(|value| render::render("internal.sessions.start", &value, false))
     {
         Some(text) => println!("{text}"),
         None => print!("{stdout}"),

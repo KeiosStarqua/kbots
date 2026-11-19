@@ -8,7 +8,7 @@ const DIM: &str = "\x1b[2m";
 const YELLOW: &str = "\x1b[33m";
 const RESET: &str = "\x1b[0m";
 
-pub fn render(method: &str, value: &Value) -> Option<String> {
+pub fn render(method: &str, value: &Value, show_finished: bool) -> Option<String> {
     match method {
         "system.status" => Some(render_status(value)),
         "tasks.create" | "tasks.cancel" => Some(render_task_write(value)),
@@ -23,7 +23,7 @@ pub fn render(method: &str, value: &Value) -> Option<String> {
         "projects.list" => Some(render_projects_list(value)),
         "projects.get" => Some(render_project_get(value)),
         "approvals.approve" => Some(render_approval(value)),
-        "agents.list" => Some(render_agents(value)),
+        "agents.list" => Some(render_agents(value, show_finished)),
         "agents.start" | "agents.show" => Some(render_agent_detail(value)),
         "agents.stop" => Some(render_agent_action(value, "stopped")),
         "agents.prompt" => Some(render_agent_action(value, "accepted")),
@@ -624,9 +624,16 @@ fn render_agent_interrupt(value: &Value) -> String {
     }
 }
 
-fn render_managed_agents(managed: &[Value]) -> String {
+fn render_managed_agents(managed: &[Value], show_all: bool) -> String {
+    // Collapse stopped rows into a single summary line (mirrors `hc ls`),
+    // unless --all is passed. Errors stay visible — they are actionable.
+    let finished_count = managed
+        .iter()
+        .filter(|agent| string(agent, "status").as_deref() == Some("stopped"))
+        .count();
     let rows: Vec<Vec<String>> = managed
         .iter()
+        .filter(|agent| show_all || string(agent, "status").as_deref() != Some("stopped"))
         .map(|agent| {
             let runtime = agent
                 .get("hcAddress")
@@ -654,10 +661,20 @@ fn render_managed_agents(managed: &[Value]) -> String {
             ]
         })
         .collect();
-    table(&["ID", "PROJECT", "ROLE", "MODE", "STATUS", "LIVE", "RUNTIME"], &rows)
+    if rows.is_empty() && finished_count > 0 && !show_all {
+        return format!("{finished_count} finished hidden (use --all to show)");
+    }
+    let mut out = format!(
+        "{}",
+        table(&["ID", "PROJECT", "ROLE", "MODE", "STATUS", "LIVE", "RUNTIME"], &rows)
+    );
+    if finished_count > 0 && !show_all {
+        out.push_str(&format!("\n{DIM}{finished_count} finished hidden (use --all to show){RESET}"));
+    }
+    out
 }
 
-fn render_agents(value: &Value) -> String {
+fn render_agents(value: &Value, show_finished: bool) -> String {
     use std::collections::HashMap;
 
     let mut lines: Vec<String> = Vec::new();
@@ -669,7 +686,7 @@ fn render_agents(value: &Value) -> String {
         .unwrap_or_default();
     if !managed.is_empty() {
         lines.push(format!("{BOLD}Managed bots{RESET}"));
-        lines.push(render_managed_agents(&managed));
+        lines.push(render_managed_agents(&managed, show_finished));
         lines.push(String::new());
     }
 
