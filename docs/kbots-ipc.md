@@ -171,6 +171,31 @@ key (esc) to the terminal. Nothing deletes a session.
 Single-writer: all mutations flow through the daemon; the TUI/GUI render the
 same registry.
 
+## Auto-kick (nudge) — v6
+
+The daemon runs an auto-kick routine so tasks never stall silently when a
+CEO session goes idle without marking its task done. Semantics:
+
+- Every 60 s the daemon selects *nudge candidates*: dispatched, non-terminal
+  tasks (`researching` | `planning` | `delegating` | `running`) whose linked
+  CEO is a live `terminal` managed agent, with `nudges < KBOTS_NUDGE_MAX`
+  (default 12) and `last_nudged_at` older than `KBOTS_NUDGE_COOLDOWN_MS`
+  (default 15 min), or never nudged. `blocked` and `review` are NOT nudged —
+  those wait on a human.
+- Each candidate gets a short prompt via the same path as `agents.prompt`
+  (`promptAgentCore`): the agent is NOT forced past a blocked program. On a
+  refused delivery the cooldown timestamp moves (retry in 15 min) but no
+  budget is spent. On a delivered nudge, `nudges` increments and `last_nudged_at`
+  is set, and a `task.nudged` event is logged (with `data: {taskId, agentId, nudge}`).
+- The prompt asks the agent to either complete the work and run
+  `kb tasks update <id> --status done --note "…"`, or to state exactly what
+  blocks it — plain text, no forced action, no file edits required by the
+  router itself.
+- Set `KBOTS_NUDGE=off` in the daemon environment to disable the loop;
+  `KBOTS_NUDGE_COOLDOWN_MS` and `KBOTS_NUDGE_MAX` tune rate and budget.
+- Nudges are not user messages and do not enter `tasks.brief`/`tasks.inbox`.
+  They are operational events, visible in `events.list` as `task.nudged`.
+
 ## v2 methods (task-centric dispatch)
 
 Implemented alongside the Mission Control work; see
