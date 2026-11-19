@@ -27,6 +27,11 @@ unlinked on SIGINT/SIGTERM, skipped without stealing if another daemon already
 serves it, and never fatal to the daemon if it fails). Sandboxed agents that
 cannot reach `/run/user/*` connect through the fallback path instead.
 
+Connections beyond `KBOTS_MAX_CONNECTIONS` (default `256`) are rejected with a
+JSON-RPC `-32000` `server busy` error instead of queueing unboundedly. SQLite
+runs in WAL mode with `synchronous = NORMAL` and a `busy_timeout` of 5000 ms,
+so many concurrent readers never block the writer longer than that window.
+
 Example request:
 
 ```json

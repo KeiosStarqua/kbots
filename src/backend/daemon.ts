@@ -59,6 +59,32 @@ import {
 const MAX_REQUEST_BYTES = 1024 * 1024
 const SOCKET_TIMEOUT_MS = 10_000
 const ROUTER_SOCKET_TIMEOUT_MS = 120_000
+// Global guard: a single client (or a bug) can never exhaust sockets file
+// descriptors or the event loop. Override with KBOTS_MAX_CONNECTIONS.
+const MAX_CONCURRENT_CONNECTIONS = (() => {
+  const raw = Number.parseInt(process.env.KBOTS_MAX_CONNECTIONS ?? "", 10)
+  return Number.isFinite(raw) && raw > 0 ? raw : 256
+})()
+
+let activeConnections = 0
+let lastBusyLogAt = 0
+
+function acceptConnection(socket: Socket, handlers: Record<string, Handler>): void {
+  if (activeConnections >= MAX_CONCURRENT_CONNECTIONS) {
+    writeJson(socket, rpcError(null, -32000, "server busy: too many concurrent connections"))
+    const now = Date.now()
+    if (now - lastBusyLogAt > 10_000) {
+      lastBusyLogAt = now
+      console.error(`${DAEMON_NAME}: rejected connection: at capacity (${MAX_CONCURRENT_CONNECTIONS})`)
+    }
+    return
+  }
+  activeConnections += 1
+  socket.once("close", () => {
+    activeConnections -= 1
+  })
+  void handleConnection(socket, handlers)
+}
 
 type Handler = (params: Record<string, unknown>) => Promise<unknown>
 
@@ -219,7 +245,7 @@ async function bindSecondary(
     await mkdir(dirname(path), { recursive: true, mode: 0o700 })
     await unlink(path).catch(() => {})
     const server = createServer((socket) => {
-      void handleConnection(socket, handlers)
+      acceptConnection(socket, handlers)
     })
     await new Promise<void>((resolvePromise, rejectPromise) => {
       server.once("error", rejectPromise)
@@ -244,7 +270,7 @@ async function main(): Promise<void> {
   const secondary = fallbackSocketPath(override, path)
   const handlers = buildHandlers(path, secondary ?? undefined)
   const server = createServer((socket) => {
-    void handleConnection(socket, handlers)
+    acceptConnection(socket, handlers)
   })
 
   let secondaryServer: Server | null = null

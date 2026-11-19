@@ -13,6 +13,8 @@ export function openDatabase(path: string = defaultDatabasePath()): Database {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
   const db = new Database(path)
   db.exec("PRAGMA journal_mode = WAL")
+  db.exec("PRAGMA synchronous = NORMAL")
+  db.exec("PRAGMA busy_timeout = 5000")
   db.exec("PRAGMA foreign_keys = ON")
   const row = db.query("PRAGMA user_version").get() as { user_version: number } | null
   const current = row?.user_version ?? 0
