@@ -104,6 +104,36 @@ stop.
 Session IDs can change; use `--list-sessions` to check the live service before
 acting.
 
+## Session model health
+
+A session stays pinned to the model it was created with. When that model is
+removed from the provider, the terminal accepts prompts and never starts a turn,
+which looks like a broken bot.
+
+The daemon keeps the sessions usable from `reconcileAgents` (once per agent per
+60 s):
+
+- It reads the session's pinned model (`session.get`) and the location's active
+  models (`model.list`, `status: "active"`, cached per directory for 60 s). The
+  list is authoritative; if it cannot be read, nothing is reported and the next
+  pass retries.
+- When the pinned model is gone it logs `agent.model_unavailable` once. If the
+  terminal is idle and the agent is running, it switches the session to
+  `KBOTS_MODEL_FALLBACK` (comma-separated `provider/model`, first entry that is
+  active) — otherwise to another active model from the same provider, otherwise
+  the first active model — and logs `agent.model_switched`. It never switches
+  mid-turn; a busy terminal is retried on a later pass.
+- `agents.show`, `agents.list`, `system.status`, and the CLI/TUI bot report carry
+  the effective `model` and `modelAvailable`; an idle bot whose model is
+  unavailable reports health code `model_unavailable`. A blocked or working
+  terminal keeps its own state, because that is what the operator must act on
+  first.
+
+Pin a model per role in `.agents/bot/<role>/opencode.jsonc` (`"model"`), or in
+the `.agents/bot/kbots.json` manifest. `sendPromptIfIdle` still detects a
+terminal left on an unavailable model and returns the fix instead of a bare
+busy refusal.
+
 ## Verification record
 
 On 2026-11-18:

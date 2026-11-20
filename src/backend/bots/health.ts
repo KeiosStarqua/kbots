@@ -310,23 +310,6 @@ export function describeBot(
     )
   }
 
-  if (modelRef && modelRef.available === false) {
-    const label = `${modelRef.providerID}/${modelRef.id}`
-    return report(
-      {
-        state: terminalStatus === "busy" ? "working" : "idle",
-        detail: terminalStatus === "busy" ? "working" : "idle",
-      },
-      {
-        level: "warning",
-        code: "model_unavailable",
-        message: `session model ${label} is unavailable`,
-        hint: 'kbots switches to a fallback when the terminal is idle (KBOTS_MODEL_FALLBACK); pin one with "model" in .agents/bot/<role>/opencode.jsonc',
-      },
-      extra,
-    )
-  }
-
   if (terminalStatus === "blocked") {
     const blockedReason = str(live.reason)
     return report(
@@ -351,6 +334,22 @@ export function describeBot(
 
   if (terminalStatus === "idle") {
     const detail = turn !== null ? `idle · turn ${turn}` : "idle"
+    // A pinned model that no longer exists means this idle bot cannot start a
+    // turn at all: say so before the task-based idle states, and only when idle
+    // (a blocked or working terminal has a more immediate state to report).
+    if (modelRef && modelRef.available === false) {
+      const label = `${modelRef.providerID}/${modelRef.id}`
+      return report(
+        { state: "idle", detail },
+        {
+          level: "warning",
+          code: "model_unavailable",
+          message: `session model ${label} is unavailable`,
+          hint: 'kbots switches to a fallback when the terminal is idle (KBOTS_MODEL_FALLBACK); pin one with "model" in .agents/bot/<role>/opencode.jsonc',
+        },
+        extra,
+      )
+    }
     if (!taskRef) {
       return report(
         { state: "idle", detail },

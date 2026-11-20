@@ -162,4 +162,42 @@ const task = (overrides: Partial<TaskRow> = {}): TaskRow => ({
   assert.equal(problemLine(report, agent()), "AGT-1 ceo · TASK-1: the terminal is gone but the agent is still registered as live")
 }
 
-console.log("health selfcheck: ok (16 cases)")
+// -- an idle bot whose session model is gone cannot start a turn -------------
+{
+  const report = describeBot(
+    agent(),
+    { state: "live", status: "idle", model: { providerID: "anthropic", id: "claude-x" }, modelAvailable: false },
+    task(),
+  )
+  assert.equal(report.activity.state, "idle")
+  assert.equal(report.health.code, "model_unavailable")
+  assert.equal(report.health.level, "warning")
+  assert.match(report.health.message, /anthropic\/claude-x is unavailable/)
+  assert.match(report.health.hint ?? "", /KBOTS_MODEL_FALLBACK/)
+  assert.equal(report.model?.id, "claude-x")
+  assert.equal(report.model?.available, false)
+}
+
+// -- a blocked terminal is reported as blocked, not as a model problem -------
+{
+  const report = describeBot(
+    agent(),
+    { state: "live", status: "blocked", reason: "approval", model: { providerID: "anthropic", id: "claude-x" }, modelAvailable: false },
+    task(),
+  )
+  assert.equal(report.activity.state, "blocked")
+  assert.equal(report.health.code, "terminal_blocked")
+}
+
+// -- an available model leaves the idle states alone -------------------------
+{
+  const report = describeBot(
+    agent(),
+    { state: "live", status: "idle", model: { providerID: "anthropic", id: "claude-y" }, modelAvailable: true },
+    null,
+  )
+  assert.equal(report.health.code, "idle")
+  assert.equal(report.model?.available, true)
+}
+
+console.log("health selfcheck: ok (19 cases)")

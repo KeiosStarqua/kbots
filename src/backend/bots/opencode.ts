@@ -27,12 +27,15 @@ export interface ModelRef {
 }
 
 const MODEL_CACHE_TTL_MS = 60_000
-let availableModelsCache: { at: number; keys: Set<string> } | null = null
+// Keyed by directory: providers and models are resolved per project location,
+// so one project's list must never answer for another's agent.
+const availableModelsCache = new Map<string, { at: number; keys: Set<string> }>()
 
-/** Active `providerID/modelID` keys, or null when the list cannot be read. */
+/** Active `providerID/modelID` keys for a location, or null when unreadable. */
 export async function availableModelKeys(directory: string): Promise<Set<string> | null> {
-  if (availableModelsCache && Date.now() - availableModelsCache.at < MODEL_CACHE_TTL_MS) {
-    return availableModelsCache.keys
+  const cached = availableModelsCache.get(directory)
+  if (cached && Date.now() - cached.at < MODEL_CACHE_TTL_MS) {
+    return cached.keys
   }
   try {
     const { client } = await makeOpencodeClient()
@@ -53,7 +56,7 @@ export async function availableModelKeys(directory: string): Promise<Set<string>
             : null
       if (providerID && modelID) keys.add(`${providerID}/${modelID}`)
     }
-    availableModelsCache = { at: Date.now(), keys }
+    availableModelsCache.set(directory, { at: Date.now(), keys })
     return keys
   } catch {
     return null
