@@ -255,6 +255,7 @@ fn render_configs(
             })?;
         open_code_config.insert("$schema".to_owned(), json!(OPENCODE_SCHEMA));
         resolve_local_plugins(project_root, &mut open_code_config, role)?;
+        resolve_mcp_disables(&mut open_code_config, role)?;
         let output = serde_json::to_string_pretty(&Value::Object(open_code_config))? + "\n";
         fs::write(&output_path, output)?;
         written.push(output_path.display().to_string());
@@ -316,6 +317,248 @@ fn resolve_local_plugins(
     Ok(())
 }
 
+/// Manifest key (`bots.<role>.opencode.mcp.disable`) that names MCP servers to
+/// switch off for this role's sessions. It is expanded into real
+/// `mcp.servers.<name>` entries before writing, so the generated config stays
+/// valid for OpenCode.
+const MCP_DISABLE_KEY: &str = "disable";
+/// Keys copied from the global server definition when disabling it. Secrets
+/// (`environment`, `headers`, `oauth`) are never copied into a project file.
+const MCP_COPIED_KEYS: [&str; 5] = ["type", "command", "cwd", "url", "timeout"];
+
+/// Turn `mcp.disable: ["rea", ...]` into `mcp.servers.rea.disabled: true`.
+///
+/// OpenCode merges MCP servers by name and replaces the whole entry, so a
+/// disabled server must be a complete definition. Rather than asking every
+/// project to restate a global command (and risking secrets in a tracked
+/// file), the definition is read from the global OpenCode config and copied
+/// without `environment`/`headers`/`oauth`.
+fn resolve_mcp_disables(
+    config: &mut Map<String, Value>,
+    role: &str,
+) -> Result<(), Box<dyn Error>> {
+    if config.get("mcp").is_none() {
+        return Ok(());
+    }
+    resolve_mcp_disables_with(config, role, &load_global_mcp_servers())
+}
+
+fn resolve_mcp_disables_with(
+    config: &mut Map<String, Value>,
+    role: &str,
+    global: &Map<String, Value>,
+) -> Result<(), Box<dyn Error>> {
+    let Some(mcp_value) = config.get_mut("mcp") else {
+        return Ok(());
+    };
+    let mcp = mcp_value.as_object_mut().ok_or_else(|| {
+        invalid_data(format!("bots.{role}.opencode.mcp must be an object"))
+    })?;
+    let Some(disable) = mcp.remove(MCP_DISABLE_KEY) else {
+        return Ok(());
+    };
+    let names = disable.as_array().ok_or_else(|| {
+        invalid_data(format!(
+            "bots.{role}.opencode.mcp.{MCP_DISABLE_KEY} must be an array of MCP server names"
+        ))
+    })?;
+    if names.is_empty() {
+        return Ok(());
+    }
+
+    let servers = mcp
+        .entry("servers".to_owned())
+        .or_insert_with(|| Value::Object(Map::new()))
+        .as_object_mut()
+        .ok_or_else(|| {
+            invalid_data(format!(
+                "bots.{role}.opencode.mcp.servers must be an object"
+            ))
+        })?;
+
+    for name in names {
+        let name = name.as_str().ok_or_else(|| {
+            invalid_data(format!(
+                "bots.{role}.opencode.mcp.{MCP_DISABLE_KEY} must contain only strings"
+            ))
+        })?;
+        if servers.contains_key(name) {
+            return Err(invalid_data(format!(
+                "bots.{role}.opencode.mcp defines servers.{name} and also disables it; pick one"
+            ))
+            .into());
+        }
+        let definition = global.get(name).and_then(Value::as_object).ok_or_else(|| {
+            invalid_data(format!(
+                "bots.{role}.opencode.mcp.{MCP_DISABLE_KEY} names unknown MCP server \"{name}\": not found in the global OpenCode config"
+            ))
+        })?;
+        let mut entry = Map::new();
+        for key in MCP_COPIED_KEYS {
+            if let Some(value) = definition.get(key) {
+                entry.insert(key.to_owned(), value.clone());
+            }
+        }
+        if entry.get("type").is_none() {
+            return Err(invalid_data(format!(
+                "global MCP server \"{name}\" has no type; cannot disable it from the project config"
+            ))
+            .into());
+        }
+        entry.insert("disabled".to_owned(), json!(true));
+        servers.insert(name.to_owned(), Value::Object(entry));
+    }
+    Ok(())
+}
+
+/// MCP servers declared by the global OpenCode config, keyed by name. Both the
+/// v2 (`mcp.servers.<name>`) and legacy (`mcp.<name>`) shapes are read; the v2
+/// entry wins when a name appears in both.
+fn load_global_mcp_servers() -> Map<String, Value> {
+    let mut servers = Map::new();
+    for path in global_config_paths() {
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<Value>(&strip_jsonc(text.trim_start_matches('\u{feff}'))) else {
+            continue;
+        };
+        let Some(mcp) = value.get("mcp").and_then(Value::as_object) else {
+            continue;
+        };
+        if let Some(v2) = mcp.get("servers").and_then(Value::as_object) {
+            for (name, definition) in v2 {
+                if definition.is_object() {
+                    servers.entry(name.clone()).or_insert_with(|| definition.clone());
+                }
+            }
+        }
+        for (name, definition) in mcp {
+            if name == "servers" || name == "timeout" || name == MCP_DISABLE_KEY {
+                continue;
+            }
+            if definition.get("type").is_some() {
+                servers.entry(name.clone()).or_insert_with(|| definition.clone());
+            }
+        }
+    }
+    servers
+}
+
+fn global_config_paths() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
+        dirs.push(PathBuf::from(xdg).join("opencode"));
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        dirs.push(PathBuf::from(home).join(".config").join("opencode"));
+    }
+    dirs.into_iter()
+        .flat_map(|dir| [dir.join("opencode.json"), dir.join("opencode.jsonc")])
+        .collect()
+}
+
+/// Strip `//` and `/* */` comments and trailing commas so a JSONC config can be
+/// parsed with serde_json. Bytes are copied verbatim (outside comments), so
+/// non-ASCII text and escapes survive.
+fn strip_jsonc(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    let mut in_string = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if in_string {
+            out.push(byte);
+            if byte == b'\\' && index + 1 < bytes.len() {
+                out.push(bytes[index + 1]);
+                index += 2;
+                continue;
+            }
+            if byte == b'"' {
+                in_string = false;
+            }
+            index += 1;
+            continue;
+        }
+        if byte == b'"' {
+            in_string = true;
+            out.push(byte);
+            index += 1;
+            continue;
+        }
+        if byte == b'/' && index + 1 < bytes.len() {
+            if bytes[index + 1] == b'/' {
+                while index < bytes.len() && bytes[index] != b'\n' {
+                    index += 1;
+                }
+                continue;
+            }
+            if bytes[index + 1] == b'*' {
+                index += 2;
+                while index + 1 < bytes.len()
+                    && !(bytes[index] == b'*' && bytes[index + 1] == b'/')
+                {
+                    index += 1;
+                }
+                index = (index + 2).min(bytes.len());
+                continue;
+            }
+        }
+        out.push(byte);
+        index += 1;
+    }
+    strip_trailing_commas(&String::from_utf8_lossy(&out))
+}
+
+/// Drop commas that are followed only by whitespace and a closing brace or
+/// bracket. Strings are skipped so `"a,"` keeps its comma.
+fn strip_trailing_commas(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    let mut in_string = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if in_string {
+            out.push(byte);
+            if byte == b'\\' && index + 1 < bytes.len() {
+                out.push(bytes[index + 1]);
+                index += 2;
+                continue;
+            }
+            if byte == b'"' {
+                in_string = false;
+            }
+            index += 1;
+            continue;
+        }
+        if byte == b'"' {
+            in_string = true;
+            out.push(byte);
+            index += 1;
+            continue;
+        }
+        if byte == b',' {
+            let mut next = index + 1;
+            while next < bytes.len() && (bytes[next] as char).is_ascii_whitespace() {
+                next += 1;
+            }
+            if next < bytes.len() && (bytes[next] == b'}' || bytes[next] == b']') {
+                index += 1;
+                continue;
+            }
+        }
+        out.push(byte);
+        index += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn invalid_data(message: String) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message)
+}
+
 fn is_local_path(value: &str) -> bool {
     value.starts_with('/')
         || value.starts_with("./")
@@ -330,5 +573,96 @@ fn default_agents(role: &str) -> &'static str {
         "ops" => include_str!("../templates/bots/ops/AGENTS.md"),
         "router" => include_str!("../templates/bots/router/AGENTS.md"),
         _ => unreachable!("unknown bot role"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn global_servers() -> Map<String, Value> {
+        let mut servers = Map::new();
+        servers.insert(
+            "rea".to_owned(),
+            json!({
+                "type": "local",
+                "command": ["npx", "-y", "rea-agents@6.8.0", "mcp"],
+                "environment": { "REA_TOKEN": "secret" },
+            }),
+        );
+        servers
+    }
+
+    #[test]
+    fn jsonc_comments_and_trailing_commas_are_stripped() {
+        let text = "{\n  // line comment with \"quotes\"\n  \"url\": \"http://x/y\", /* block */\n  \"list\": [1, 2,],\n}";
+        let value: Value = serde_json::from_str(&strip_jsonc(text)).expect("parseable");
+        assert_eq!(value["url"], json!("http://x/y"));
+        assert_eq!(value["list"], json!([1, 2]));
+    }
+
+    #[test]
+    fn disable_copies_a_sanitized_definition() {
+        let mut config = json!({
+            "instructions": [".agents/bot/ceo/AGENTS.md"],
+            "mcp": { "disable": ["rea"] },
+        })
+        .as_object()
+        .expect("object")
+        .clone();
+        resolve_mcp_disables_with(&mut config, "ceo", &global_servers()).expect("resolves");
+        let mcp = config.get("mcp").and_then(Value::as_object).expect("mcp");
+        assert!(mcp.get(MCP_DISABLE_KEY).is_none());
+        let server = mcp
+            .get("servers")
+            .and_then(Value::as_object)
+            .and_then(|servers| servers.get("rea"))
+            .expect("rea entry");
+        assert_eq!(
+            server,
+            &json!({
+                "type": "local",
+                "command": ["npx", "-y", "rea-agents@6.8.0", "mcp"],
+                "disabled": true,
+            })
+        );
+        assert!(server.get("environment").is_none());
+    }
+
+    #[test]
+    fn disable_without_a_known_server_is_an_error() {
+        let mut config = json!({ "mcp": { "disable": ["nope"] } })
+            .as_object()
+            .expect("object")
+            .clone();
+        let error = resolve_mcp_disables_with(&mut config, "git", &global_servers())
+            .expect_err("unknown server must fail");
+        assert!(error.to_string().contains("unknown MCP server"));
+    }
+
+    #[test]
+    fn disable_conflicting_with_an_explicit_entry_is_an_error() {
+        let mut config = json!({
+            "mcp": {
+                "disable": ["rea"],
+                "servers": { "rea": { "type": "local", "command": ["x"], "disabled": false } },
+            },
+        })
+        .as_object()
+        .expect("object")
+        .clone();
+        let error = resolve_mcp_disables_with(&mut config, "ops", &global_servers())
+            .expect_err("conflict must fail");
+        assert!(error.to_string().contains("also disables"));
+    }
+
+    #[test]
+    fn config_without_mcp_is_left_alone() {
+        let mut config = json!({ "instructions": ["a"] })
+            .as_object()
+            .expect("object")
+            .clone();
+        resolve_mcp_disables_with(&mut config, "ceo", &global_servers()).expect("no-op");
+        assert_eq!(config.len(), 1);
     }
 }

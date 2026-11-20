@@ -13,6 +13,7 @@
 
 - Daemon-owned operations go over the local Unix socket (JSON-RPC 2.0); the contract is `../docs/kbots-ipc.md`. The CLI is a client, not a bypass.
 - `project add`, `project configure`, and `project sync` are local/direct OpenCode operations; everything else (tasks, agents, approvals) is daemon-owned.
+- `project configure` expands `bots.<role>.opencode.mcp.disable` into `mcp.servers.<name>.disabled` entries by copying the definition from the global OpenCode config (`type`, `command`, `cwd`, `url`, `timeout` only — never `environment`, `headers`, or `oauth`). Keep it that way: a tracked project config must not carry secrets.
 - `project sync` refreshes the embedded starter `AGENTS.md` files in an existing project: missing files are created, template-identical files are left alone, and customized files are kept unless `--force` is passed (each is backed up first as `AGENTS.md.bak[.N]`). The project manifest and OpenCode configs are not touched.
 - `tasks update` moves a task only to `review`, `blocked`, `done`, `failed`, or `canceled`; the daemon validates the status and rejects terminal-state changes.
 - `tasks message TASK-ID TEXT` delivers a message to the task's CEO (or queues it when the CEO is busy); `tasks brief` and `tasks inbox` render daemon-generated summaries — never compute them client-side.

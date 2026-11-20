@@ -129,6 +129,37 @@ copy their settings into `.agents/bot/kbots.json`, then run
 `kbots project configure --overwrite`. Project-specific instructions and
 plugins stay local instead of being copied between repositories.
 
+MCP servers are declared globally in OpenCode, so every session in the
+project would otherwise load all of them. A role can switch individual
+servers off by naming them under `mcp.disable` — no need to restate the
+server command:
+
+```json
+{
+  "bots": {
+    "ceo": {
+      "enabled": true,
+      "opencode": {
+        "instructions": [".agents/bot/ceo/AGENTS.md"],
+        "plugins": [],
+        "mcp": { "disable": ["rea"] }
+      }
+    }
+  },
+  "version": 1
+}
+```
+
+`kbots project configure` reads each named server from the global OpenCode
+config (`mcp.servers.<name>` in v2, the legacy `mcp.<name>` shape otherwise)
+and writes it into that role's `opencode.jsonc` with `disabled: true`. Only
+`type`, `command`, `cwd`, `url`, and `timeout` are copied; `environment`,
+`headers`, and `oauth` stay out of the generated file, so a tracked project
+config never carries a secret. An unknown server name, or a name the role
+already defines under `mcp.servers`, is an error. This affects that role's
+sessions only (they run in `.agents/bot/<role>`), not sessions opened at the
+project root. Existing configs are only rewritten by `--overwrite`.
+
 `kbots project sync` refreshes the starter `.agents/bot/{ceo,git,ops,router}/AGENTS.md`
 files from the templates embedded at build time. Missing files are created;
 files identical to the template are left alone; customized files are kept unless
