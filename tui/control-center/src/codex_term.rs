@@ -75,10 +75,10 @@ impl CodexTerm {
             })
             .map_err(io::Error::other)?;
         let mut command = portable_pty::CommandBuilder::new("codex");
-        command.arg("--sandbox");
-        command.arg("workspace-write");
-        command.arg("--ask-for-approval");
-        command.arg("on-request");
+        // Yolo mode (owner directive): no approval prompts, no sandbox.
+        // The Codex page exists to drive the bots unattended; it must never
+        // stop on a "run this command?" prompt.
+        command.arg("--dangerously-bypass-approvals-and-sandbox");
         if let Some(context) = context {
             command.arg(context);
         }

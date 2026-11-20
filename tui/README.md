@@ -22,7 +22,7 @@ arrows, `h/j/k/l`, `n/p`, and `1`–`7`.
 
 The Codex page (section 1 of the Full layout) is a real interactive Codex CLI running in an
 embedded pseudo-terminal (`portable-pty` → `vt100` → `tui-term`), spawned as
-`codex --sandbox workspace-write --ask-for-approval on-request`, running
+`codex --dangerously-bypass-approvals-and-sandbox` (yolo mode), running
 with its cwd inside the project's `.agents/bot/router/` folder (the task-router
 instructions for Codex). When the folder is missing, it is scaffolded from the
 embedded template automatically (identical to `kb project sync`; never
