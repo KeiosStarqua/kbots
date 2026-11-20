@@ -56,8 +56,78 @@ import {
   sendPromptIfIdle,
   type HerdrFullTerminal,
 } from "../adapters/herdr.ts"
-import { makeOpencodeClient } from "./opencode.ts"
+import {
+  availableModelKeys,
+  makeOpencodeClient,
+  pickFallbackModel,
+  sessionModelRef,
+  switchSessionModel,
+  type ModelRef,
+} from "./opencode.ts"
 import { describeBot, isProblem, type BotReport } from "./health.ts"
+
+// Last known model health per agent: the session's pinned model, whether the
+// installed OpenCode still lists it, and the fallback it was switched to.
+interface AgentModelState {
+  at: number
+  model: ModelRef | null
+  available: boolean | null
+  switchedTo: ModelRef | null
+}
+const MODEL_STATE_TTL_MS = 60_000
+const modelStateByAgent = new Map<string, AgentModelState>()
+
+/**
+ * Keep a session usable when the model it was pinned to disappears. The model
+ * list is authoritative; when the pinned model is gone, log it once and switch
+ * an idle terminal agent to `KBOTS_MODEL_FALLBACK` (or another active model,
+ * same provider first). Never switches mid-turn.
+ */
+async function ensureAgentModel(
+  agent: AgentRow,
+  live: { state: string | null; status: string | null },
+): Promise<void> {
+  if (!agent.sessionId) return
+  const cached = modelStateByAgent.get(agent.id)
+  if (cached && Date.now() - cached.at < MODEL_STATE_TTL_MS) return
+  const model = await sessionModelRef(agent.sessionId)
+  if (!model) {
+    modelStateByAgent.set(agent.id, { at: Date.now(), model: null, available: null, switchedTo: null })
+    return
+  }
+  const keys = await availableModelKeys(agent.directory)
+  if (!keys) {
+    // The model list itself is unreadable — say nothing, try again later.
+    modelStateByAgent.set(agent.id, { at: Date.now(), model, available: null, switchedTo: null })
+    return
+  }
+  const key = `${model.providerID}/${model.id}`
+  if (keys.has(key)) {
+    modelStateByAgent.set(agent.id, { at: Date.now(), model, available: true, switchedTo: null })
+    return
+  }
+  const idle = live.status === "idle" && live.state === "live"
+  const fallback = pickFallbackModel(keys, model)
+  if (idle && fallback && agent.status === "running") {
+    if (await switchSessionModel(agent.sessionId, fallback)) {
+      modelStateByAgent.set(agent.id, { at: Date.now(), model: fallback, available: true, switchedTo: fallback })
+      addEvent(
+        "agent.model_switched",
+        `Agent ${agent.id} model ${key} is unavailable; switched the session to ${fallback.providerID}/${fallback.id}`,
+        { agentId: agent.id, from: key, to: `${fallback.providerID}/${fallback.id}` },
+      )
+      return
+    }
+  }
+  if (cached?.available !== false) {
+    addEvent(
+      "agent.model_unavailable",
+      `Agent ${agent.id} session model ${key} is unavailable${idle ? "" : " (waiting for an idle turn to switch)"}`,
+      { agentId: agent.id, model: key, ...(fallback ? { fallback: `${fallback.providerID}/${fallback.id}` } : {}) },
+    )
+  }
+  modelStateByAgent.set(agent.id, { at: Date.now(), model, available: false, switchedTo: null })
+}
 
 // Per-task cooldown for retrying dispatch of deferred (cap-blocked) tasks.
 // reconcile runs at boot and before every mutation — and `list` runs every
@@ -176,12 +246,19 @@ export async function probeAgent(agent: AgentRow): Promise<Record<string, unknow
       if (!agent.hcAddress) return { state: "missing" }
       const terminal = await getTerminal(agent.hcAddress)
       if (!terminal) return { state: "missing" }
+      const modelState = modelStateByAgent.get(agent.id)
       return {
         state: terminal.state,
         status: terminal.status?.state ?? null,
         turn: terminal.turn,
         address: terminal.address,
         reason: terminal.reason,
+        ...(modelState
+          ? {
+              model: modelState.switchedTo ?? modelState.model,
+              modelAvailable: modelState.available,
+            }
+          : {}),
       }
     }
     // Legacy headless rows (retired mode): report the last recorded outcome,
@@ -623,6 +700,15 @@ export async function reconcileAgents(): Promise<{ checked: number; changed: num
         if (agent.status !== "running") {
           updateAgent(agent.id, { status: "running" })
           changed += 1
+        }
+        // Keep the session usable if its pinned model disappeared.
+        try {
+          await ensureAgentModel(agent, {
+            state: terminal.state ?? null,
+            status: terminal.status?.state ?? null,
+          })
+        } catch {
+          // Model health is advisory; reconcile must never fail on it.
         }
       } else {
         // Legacy headless rows (retired 2026-11-19): do not probe OpenCode,

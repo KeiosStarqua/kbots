@@ -170,6 +170,18 @@ kills the terminal but keeps the OpenCode session and its history —
 one instead. `prompt` refuses unless the agent is idle (never `force`s past a
 blocked program): it probes the `hc` status word. `interrupt` sends the stop
 key (esc) to the terminal. Nothing deletes a session.
+
+Model health: the maintenance loop compares each session's pinned model
+against OpenCode's active model list (`client.model.list`). A model that
+disappeared is reported as health code `model_unavailable`; when the terminal
+is idle, the session is switched to `KBOTS_MODEL_FALLBACK` (comma-separated
+`provider/model`), otherwise to another active model — free models before paid
+ones, same provider before others — and the switch is logged as
+`agent.model_switched`. If no model is left, the bot keeps the warning and
+nothing is switched. A prompt that cannot start a turn because the session
+model is unavailable now fails with an explicit, actionable error instead of
+leaving the text in the input box; `agents.logs` shows the terminal screen and
+session history for diagnosis.
 Single-writer: all mutations flow through the daemon; the TUI/GUI render the
 same registry.
 

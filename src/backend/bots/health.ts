@@ -65,11 +65,18 @@ export interface BotLiveRef {
   turn: number | null
 }
 
+export interface BotModelRef {
+  providerID: string
+  id: string
+  available: boolean | null
+}
+
 export interface BotReport {
   activity: BotActivity
   health: BotHealth
   task: BotTaskRef | null
   live: BotLiveRef | null
+  model: BotModelRef | null
   lastOutcome: string | null
   lastOutcomeAt: string | null
 }
@@ -112,6 +119,7 @@ function report(
     health,
     task: null,
     live: null,
+    model: null,
     lastOutcome: null,
     lastOutcomeAt: null,
     ...extra,
@@ -155,9 +163,19 @@ export function describeBot(
   const taskRef: BotTaskRef | null = task
     ? { taskId: task.taskId, title: task.title, status: task.status, updatedAt: task.updatedAt }
     : null
+  const liveRecord = live ?? null
+  const liveModel = liveRecord ? (liveRecord.model as Record<string, unknown> | undefined) : undefined
+  const modelRef: BotModelRef | null = liveModel && typeof liveModel.providerID === "string" && typeof liveModel.id === "string"
+    ? {
+        providerID: liveModel.providerID,
+        id: liveModel.id,
+        available: typeof liveRecord?.modelAvailable === "boolean" ? liveRecord.modelAvailable : null,
+      }
+    : null
   const extra: Partial<BotReport> = {
     task: taskRef,
     live: liveRef,
+    model: modelRef,
     lastOutcome: agent.lastOutcome,
     lastOutcomeAt: agent.lastOutcomeAt,
   }
@@ -287,6 +305,23 @@ export function describeBot(
         code: "terminal_finished",
         message: `the terminal exited: ${why}`,
         hint: "the maintenance tick reconciles this; kbots agents start <role> resumes the session",
+      },
+      extra,
+    )
+  }
+
+  if (modelRef && modelRef.available === false) {
+    const label = `${modelRef.providerID}/${modelRef.id}`
+    return report(
+      {
+        state: terminalStatus === "busy" ? "working" : "idle",
+        detail: terminalStatus === "busy" ? "working" : "idle",
+      },
+      {
+        level: "warning",
+        code: "model_unavailable",
+        message: `session model ${label} is unavailable`,
+        hint: 'kbots switches to a fallback when the terminal is idle (KBOTS_MODEL_FALLBACK); pin one with "model" in .agents/bot/<role>/opencode.jsonc',
       },
       extra,
     )
