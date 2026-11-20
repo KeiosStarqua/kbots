@@ -355,13 +355,10 @@ fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> 
             ),
             TaskCommands::Show { task_id } => ("tasks.get", json!({ "taskId": task_id })),
             TaskCommands::Cancel { task_id } => ("tasks.cancel", json!({ "taskId": task_id })),
-            TaskCommands::Message { task_id, text } => (
-                "tasks.message",
-                json!({ "taskId": task_id, "text": text }),
-            ),
-            TaskCommands::Messages { task_id } => {
-                ("tasks.messages", json!({ "taskId": task_id }))
+            TaskCommands::Message { task_id, text } => {
+                ("tasks.message", json!({ "taskId": task_id, "text": text }))
             }
+            TaskCommands::Messages { task_id } => ("tasks.messages", json!({ "taskId": task_id })),
             TaskCommands::Brief { task_id } => match task_id {
                 Some(task_id) => ("tasks.brief", json!({ "taskId": task_id })),
                 None => ("tasks.brief", json!({})),
@@ -382,22 +379,24 @@ fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> 
         Commands::Agents { command } => match command {
             AgentCommands::List { project, .. } => {
                 ("agents.list", json!({ "project": scoped_project(project) }))
-            },
-            AgentCommands::Start { role, project, fresh } => {
-            ("agents.start", json!({ "role": role, "project": project, "fresh": fresh }))
-        },
-            AgentCommands::Show { bot_id } => ("agents.show", json!({ "botId": bot_id })),
-            AgentCommands::Logs { bot_id, limit } => (
-                "agents.logs",
-                json!({ "botId": bot_id, "limit": limit }),
+            }
+            AgentCommands::Start {
+                role,
+                project,
+                fresh,
+            } => (
+                "agents.start",
+                json!({ "role": role, "project": project, "fresh": fresh }),
             ),
+            AgentCommands::Show { bot_id } => ("agents.show", json!({ "botId": bot_id })),
+            AgentCommands::Logs { bot_id, limit } => {
+                ("agents.logs", json!({ "botId": bot_id, "limit": limit }))
+            }
             AgentCommands::Stop { bot_id } => ("agents.stop", json!({ "botId": bot_id })),
             AgentCommands::Prompt { bot_id, text } => {
                 ("agents.prompt", json!({ "botId": bot_id, "text": text }))
             }
-            AgentCommands::Interrupt { bot_id } => {
-                ("agents.interrupt", json!({ "botId": bot_id }))
-            }
+            AgentCommands::Interrupt { bot_id } => ("agents.interrupt", json!({ "botId": bot_id })),
         },
         Commands::Sessions { .. } => unreachable!("session commands are handled before RPC"),
         Commands::Project { command } => match command {
@@ -579,8 +578,7 @@ fn request_with_fallback(
 fn request(socket: &std::path::Path, method: &str, params: Value) -> Result<Value, Box<dyn Error>> {
     use std::os::unix::net::UnixStream;
 
-    let mut stream = UnixStream::connect(socket)
-        .map_err(|error| io::Error::from(error))?;
+    let mut stream = UnixStream::connect(socket).map_err(|error| io::Error::from(error))?;
     stream.set_read_timeout(Some(Duration::from_secs(15)))?;
     stream.set_write_timeout(Some(Duration::from_secs(15)))?;
 

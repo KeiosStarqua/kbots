@@ -134,16 +134,27 @@ fn list_items(value: &Value) -> Vec<Value> {
 }
 
 fn base_name(path: &str) -> &str {
-    path.rsplit('/').find(|part| !part.is_empty()).unwrap_or(path)
+    path.rsplit('/')
+        .find(|part| !part.is_empty())
+        .unwrap_or(path)
 }
 
 fn render_status(value: &Value) -> String {
     let daemon = value.get("daemon").cloned().unwrap_or(Value::Null);
-    let name = daemon.get("name").and_then(Value::as_str).unwrap_or("daemon");
+    let name = daemon
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("daemon");
     let version = daemon.get("version").and_then(Value::as_str).unwrap_or("?");
     let pid = daemon.get("pid").and_then(Value::as_i64).unwrap_or(-1);
-    let uptime = daemon.get("uptimeSeconds").and_then(Value::as_i64).unwrap_or(0);
-    let socket = daemon.get("socketPath").and_then(Value::as_str).unwrap_or("?");
+    let uptime = daemon
+        .get("uptimeSeconds")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let socket = daemon
+        .get("socketPath")
+        .and_then(Value::as_str)
+        .unwrap_or("?");
 
     let projects = value.get("projects").and_then(Value::as_i64).unwrap_or(0);
     let tasks_total = value
@@ -162,7 +173,10 @@ fn render_status(value: &Value) -> String {
                 .join(", ")
         })
         .unwrap_or_default();
-    let pending = value.get("pendingApprovals").and_then(Value::as_i64).unwrap_or(0);
+    let pending = value
+        .get("pendingApprovals")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
 
     let uptime_text = if uptime >= 3600 {
         format!("{}h {}m", uptime / 3600, (uptime % 3600) / 60)
@@ -176,11 +190,20 @@ fn render_status(value: &Value) -> String {
         format!("{BOLD}{name}{RESET} v{version} (pid {pid}, up {uptime_text})"),
         format!("socket    {socket}"),
         format!("projects  {projects}"),
-        format!("tasks     {tasks_total}{}", if by_status.is_empty() { String::new() } else { format!(" ({by_status})") }),
+        format!(
+            "tasks     {tasks_total}{}",
+            if by_status.is_empty() {
+                String::new()
+            } else {
+                format!(" ({by_status})")
+            }
+        ),
         format!("pending approvals  {pending}"),
     ];
     if pending > 0 {
-        lines.push(format!("{YELLOW}{pending} protected operation(s) await approval{RESET}"));
+        lines.push(format!(
+            "{YELLOW}{pending} protected operation(s) await approval{RESET}"
+        ));
     }
     lines.join("\n")
 }
@@ -474,9 +497,15 @@ fn render_task_update(value: &Value) -> String {
 
 fn render_task_get(value: &Value) -> String {
     detail(&[
-        ("task", string(value, "taskId").unwrap_or_else(|| "?".to_owned())),
+        (
+            "task",
+            string(value, "taskId").unwrap_or_else(|| "?".to_owned()),
+        ),
         ("title", string(value, "title").unwrap_or_default()),
-        ("status", string(value, "status").unwrap_or_else(|| "?".to_owned())),
+        (
+            "status",
+            string(value, "status").unwrap_or_else(|| "?".to_owned()),
+        ),
         (
             "project",
             match (string(value, "projectPath"), string(value, "projectId")) {
@@ -485,8 +514,14 @@ fn render_task_get(value: &Value) -> String {
                 _ => "-".to_owned(),
             },
         ),
-        ("created", string(value, "createdAt").unwrap_or_else(|| "-".to_owned())),
-        ("updated", string(value, "updatedAt").unwrap_or_else(|| "-".to_owned())),
+        (
+            "created",
+            string(value, "createdAt").unwrap_or_else(|| "-".to_owned()),
+        ),
+        (
+            "updated",
+            string(value, "updatedAt").unwrap_or_else(|| "-".to_owned()),
+        ),
         ("canceled", nullable(value, "canceledAt")),
     ])
 }
@@ -495,7 +530,11 @@ fn render_project_register(value: &Value) -> String {
     let id = string(value, "projectId").unwrap_or_else(|| "?".to_owned());
     let name = string(value, "name").unwrap_or_else(|| "?".to_owned());
     let path = string(value, "path").unwrap_or_else(|| "?".to_owned());
-    let action = if value.get("created").and_then(Value::as_bool).unwrap_or(false) {
+    let action = if value
+        .get("created")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
         "registered"
     } else {
         "updated"
@@ -551,12 +590,27 @@ fn render_project_get(value: &Value) -> String {
         })
         .unwrap_or_else(|| "-".to_owned());
     detail(&[
-        ("project", string(value, "projectId").unwrap_or_else(|| "?".to_owned())),
-        ("name", string(value, "name").unwrap_or_else(|| "?".to_owned())),
-        ("path", string(value, "path").unwrap_or_else(|| "?".to_owned())),
+        (
+            "project",
+            string(value, "projectId").unwrap_or_else(|| "?".to_owned()),
+        ),
+        (
+            "name",
+            string(value, "name").unwrap_or_else(|| "?".to_owned()),
+        ),
+        (
+            "path",
+            string(value, "path").unwrap_or_else(|| "?".to_owned()),
+        ),
         ("roles", roles),
-        ("created", string(value, "createdAt").unwrap_or_else(|| "-".to_owned())),
-        ("updated", string(value, "updatedAt").unwrap_or_else(|| "-".to_owned())),
+        (
+            "created",
+            string(value, "createdAt").unwrap_or_else(|| "-".to_owned()),
+        ),
+        (
+            "updated",
+            string(value, "updatedAt").unwrap_or_else(|| "-".to_owned()),
+        ),
     ])
 }
 
@@ -586,7 +640,10 @@ fn render_approvals_list(value: &Value) -> String {
                 string(item, "id").unwrap_or_else(|| "?".to_owned()),
                 string(item, "status").unwrap_or_else(|| "?".to_owned()),
                 string(item, "operation").unwrap_or_else(|| "-".to_owned()),
-                truncate_chars(&string(item, "detail").unwrap_or_else(|| "-".to_owned()), 60),
+                truncate_chars(
+                    &string(item, "detail").unwrap_or_else(|| "-".to_owned()),
+                    60,
+                ),
                 string(item, "createdAt").unwrap_or_else(|| "-".to_owned()),
             ]
         })
@@ -603,7 +660,11 @@ fn render_events(value: &Value) -> String {
         .iter()
         .map(|item| {
             let ts = string(item, "ts").unwrap_or_else(|| "-".to_owned());
-            let ts = ts.get(0..19).map(str::to_owned).unwrap_or(ts).replace('T', " ");
+            let ts = ts
+                .get(0..19)
+                .map(str::to_owned)
+                .unwrap_or(ts)
+                .replace('T', " ");
             let kind = string(item, "kind").unwrap_or_else(|| "?".to_owned());
             let message = truncate_chars(&string(item, "message").unwrap_or_default(), 110);
             format!("{DIM}{ts}{RESET}  {kind}  {message}")
@@ -658,13 +719,25 @@ fn render_agent_detail(value: &Value) -> String {
     detail(&[
         ("agent", format!("{id} · {role} · {mode}")),
         ("project", project),
-        ("status", string(value, "status").unwrap_or_else(|| "?".to_owned())),
+        (
+            "status",
+            string(value, "status").unwrap_or_else(|| "?".to_owned()),
+        ),
         ("live", live_text),
         ("session", nullable(value, "sessionId")),
         ("terminal", nullable(value, "hcAddress")),
-        ("directory", string(value, "directory").unwrap_or_else(|| "-".to_owned())),
-        ("created", string(value, "createdAt").unwrap_or_else(|| "-".to_owned())),
-        ("updated", string(value, "updatedAt").unwrap_or_else(|| "-".to_owned())),
+        (
+            "directory",
+            string(value, "directory").unwrap_or_else(|| "-".to_owned()),
+        ),
+        (
+            "created",
+            string(value, "createdAt").unwrap_or_else(|| "-".to_owned()),
+        ),
+        (
+            "updated",
+            string(value, "updatedAt").unwrap_or_else(|| "-".to_owned()),
+        ),
     ])
 }
 
@@ -685,7 +758,9 @@ fn render_agent_action(value: &Value, verb: &str) -> String {
 }
 
 fn render_agent_logs(value: &Value) -> String {
-    let id = string(value, "id").or_else(|| string(value, "agentId")).unwrap_or_else(|| "?".to_owned());
+    let id = string(value, "id")
+        .or_else(|| string(value, "agentId"))
+        .unwrap_or_else(|| "?".to_owned());
     let status = string(value, "status").unwrap_or_else(|| "?".to_owned());
     let mode = string(value, "mode").unwrap_or_else(|| "?".to_owned());
     let session = string(value, "sessionId").unwrap_or_else(|| "-".to_owned());
@@ -697,7 +772,11 @@ fn render_agent_logs(value: &Value) -> String {
             out.push_str(&format!("\n{DIM}{line}{RESET}"));
         }
     }
-    let messages = value.get("messages").and_then(Value::as_array).cloned().unwrap_or_default();
+    let messages = value
+        .get("messages")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     out.push_str(&format!("\n\n{BOLD}MESSAGES ({}){RESET}", messages.len()));
     if messages.is_empty() {
         out.push_str("\n(no messages)");
@@ -706,7 +785,12 @@ fn render_agent_logs(value: &Value) -> String {
     for message in &messages {
         let kind = string(message, "type").unwrap_or_else(|| "?".to_owned());
         let created = string(message, "createdAt")
-            .map(|ts| ts.get(0..19).map(str::to_owned).unwrap_or(ts).replace('T', " "))
+            .map(|ts| {
+                ts.get(0..19)
+                    .map(str::to_owned)
+                    .unwrap_or(ts)
+                    .replace('T', " ")
+            })
             .unwrap_or_else(|| "-".to_owned());
         let text = string(message, "text").unwrap_or_default();
         let text = truncate_chars(&text.replace('\n', " "), 220);
@@ -745,7 +829,11 @@ fn render_managed_agents(managed: &[Value], show_all: bool) -> String {
             let live = agent
                 .get("live")
                 .filter(|live| !live.is_null())
-                .and_then(|live| live.get("state").or_else(|| live.get("outcome")).and_then(Value::as_str))
+                .and_then(|live| {
+                    live.get("state")
+                        .or_else(|| live.get("outcome"))
+                        .and_then(Value::as_str)
+                })
                 .unwrap_or("?");
             vec![
                 string(agent, "id").unwrap_or_else(|| "?".to_owned()),
@@ -767,10 +855,15 @@ fn render_managed_agents(managed: &[Value], show_all: bool) -> String {
     }
     let mut out = format!(
         "{}",
-        table(&["ID", "PROJECT", "ROLE", "MODE", "STATUS", "LIVE", "RUNTIME"], &rows)
+        table(
+            &["ID", "PROJECT", "ROLE", "MODE", "STATUS", "LIVE", "RUNTIME"],
+            &rows
+        )
     );
     if finished_count > 0 && !show_all {
-        out.push_str(&format!("\n{DIM}{finished_count} finished hidden (use --all to show){RESET}"));
+        out.push_str(&format!(
+            "\n{DIM}{finished_count} finished hidden (use --all to show){RESET}"
+        ));
     }
     out
 }
@@ -818,7 +911,10 @@ fn render_agents(value: &Value, show_finished: bool) -> String {
             }
             let group = groups[path].clone();
             let first = group[0];
-            let registered = first.get("registered").and_then(Value::as_bool).unwrap_or(false);
+            let registered = first
+                .get("registered")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             let name = first
                 .get("projectName")
                 .and_then(Value::as_str)
@@ -829,14 +925,17 @@ fn render_agents(value: &Value, show_finished: bool) -> String {
             } else {
                 "unregistered".to_owned()
             };
-            lines.push(format!("{BOLD}{name}{RESET}  {DIM}{suffix} · {path}{RESET}"));
+            lines.push(format!(
+                "{BOLD}{name}{RESET}  {DIM}{suffix} · {path}{RESET}"
+            ));
             let rows: Vec<Vec<String>> = group
                 .iter()
                 .map(|item| {
                     let herdr = item.get("herdr").filter(|herdr| !herdr.is_null());
                     let herdr_cell = match herdr {
                         Some(herdr) => {
-                            let address = herdr.get("address").and_then(Value::as_str).unwrap_or("?");
+                            let address =
+                                herdr.get("address").and_then(Value::as_str).unwrap_or("?");
                             let state = herdr
                                 .get("status")
                                 .or_else(|| herdr.get("state"))
@@ -852,7 +951,9 @@ fn render_agents(value: &Value, show_finished: bool) -> String {
                     };
                     vec![
                         string(item, "role").unwrap_or_else(|| "?".to_owned()),
-                        item.get("enabled").map(as_bool).unwrap_or_else(|| "?".to_owned()),
+                        item.get("enabled")
+                            .map(as_bool)
+                            .unwrap_or_else(|| "?".to_owned()),
                         nullable(item, "sessionID"),
                         herdr_cell,
                     ]
@@ -870,7 +971,9 @@ fn render_agents(value: &Value, show_finished: bool) -> String {
     match value.get("herdrUnavailable") {
         Some(Value::String(reason)) => {
             lines.push(String::new());
-            lines.push(format!("{YELLOW}live terminals unavailable: {reason}{RESET}"));
+            lines.push(format!(
+                "{YELLOW}live terminals unavailable: {reason}{RESET}"
+            ));
         }
         _ if !live.is_empty() => {
             lines.push(String::new());
@@ -895,11 +998,17 @@ fn render_agents(value: &Value, show_finished: bool) -> String {
                     ]
                 })
                 .collect();
-            lines.push(table(&["ADDRESS", "AGENT", "NAME", "WHERE", "STATUS", "TURN"], &rows));
+            lines.push(table(
+                &["ADDRESS", "AGENT", "NAME", "WHERE", "STATUS", "TURN"],
+                &rows,
+            ));
         }
         _ => {
             lines.push(String::new());
-            let filtered = value.get("filteredOut").and_then(Value::as_i64).unwrap_or(0);
+            let filtered = value
+                .get("filteredOut")
+                .and_then(Value::as_i64)
+                .unwrap_or(0);
             if filtered > 0 {
                 lines.push(format!(
                     "{DIM}Live terminals (hc): none for registered projects ({filtered} from other projects hidden){RESET}"
@@ -915,7 +1024,8 @@ fn render_agents(value: &Value, show_finished: bool) -> String {
 fn render_watchers_list(value: &Value) -> String {
     let items = list_items(value);
     if items.is_empty() {
-        return "No watchers configured. See `kbots project watch --project <ref>` to enable one.".to_owned();
+        return "No watchers configured. See `kbots project watch --project <ref>` to enable one."
+            .to_owned();
     }
     let rows: Vec<Vec<String>> = items
         .iter()
@@ -927,7 +1037,11 @@ fn render_watchers_list(value: &Value) -> String {
                     .and_then(Value::as_str)
                     .map(str::to_owned)
                     .unwrap_or_else(|| "?".to_owned()),
-                if watcher.get("enabled").and_then(Value::as_bool).unwrap_or(false) {
+                if watcher
+                    .get("enabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                {
                     "on".to_owned()
                 } else {
                     "off".to_owned()
@@ -952,7 +1066,18 @@ fn render_watchers_list(value: &Value) -> String {
             ]
         })
         .collect();
-    table(&["PROJECT", "STATE", "INTERVAL", "DEBOUNCE", "COOLDOWN", "LAST CHANGE", "LAST DELIVERED"], &rows)
+    table(
+        &[
+            "PROJECT",
+            "STATE",
+            "INTERVAL",
+            "DEBOUNCE",
+            "COOLDOWN",
+            "LAST CHANGE",
+            "LAST DELIVERED",
+        ],
+        &rows,
+    )
 }
 
 fn render_watcher_set(value: &Value) -> String {
@@ -962,12 +1087,26 @@ fn render_watcher_set(value: &Value) -> String {
         .and_then(Value::as_str)
         .map(str::to_owned)
         .unwrap_or_else(|| "?".to_owned());
-    let enabled = value.get("enabled").and_then(Value::as_bool).unwrap_or(false);
-    let interval = value.get("intervalSeconds").and_then(Value::as_u64).unwrap_or(0);
-    let debounce = value.get("debounceSeconds").and_then(Value::as_u64).unwrap_or(0);
-    let cooldown = value.get("cooldownSeconds").and_then(Value::as_u64).unwrap_or(0);
+    let enabled = value
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let interval = value
+        .get("intervalSeconds")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let debounce = value
+        .get("debounceSeconds")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cooldown = value
+        .get("cooldownSeconds")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
     if enabled {
-        format!("watcher enabled for {project} (interval {interval}s, debounce {debounce}s, cooldown {cooldown}s)")
+        format!(
+            "watcher enabled for {project} (interval {interval}s, debounce {debounce}s, cooldown {cooldown}s)"
+        )
     } else {
         format!("watcher disabled for {project}")
     }
@@ -982,7 +1121,10 @@ fn render_sessions_start(value: &Value) -> String {
             for entry in entries {
                 any = true;
                 let role = entry.get("role").and_then(Value::as_str).unwrap_or("?");
-                let id = entry.get("sessionID").and_then(Value::as_str).unwrap_or("?");
+                let id = entry
+                    .get("sessionID")
+                    .and_then(Value::as_str)
+                    .unwrap_or("?");
                 lines.push(format!("{label}  {role:<4}  {id}"));
             }
         }
@@ -1023,14 +1165,27 @@ fn render_project_sync(value: &Value) -> String {
             .unwrap_or_else(|| "-".to_owned())
     };
     if value.get("check").and_then(Value::as_bool).unwrap_or(false) {
-        let up_to_date = value.get("upToDate").and_then(Value::as_bool).unwrap_or(false);
+        let up_to_date = value
+            .get("upToDate")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         return detail(&[
-            ("version", string(value, "kbotsVersion").unwrap_or_else(|| "?".to_owned())),
+            (
+                "version",
+                string(value, "kbotsVersion").unwrap_or_else(|| "?".to_owned()),
+            ),
             (
                 "recorded",
                 string(value, "recordedVersion").unwrap_or_else(|| "never synced".to_owned()),
             ),
-            ("state", if up_to_date { "up to date".to_owned() } else { "needs sync".to_owned() }),
+            (
+                "state",
+                if up_to_date {
+                    "up to date".to_owned()
+                } else {
+                    "needs sync".to_owned()
+                },
+            ),
             ("stale", format_list("stale")),
             ("customized", format_list("customized")),
         ]);
@@ -1050,14 +1205,23 @@ fn render_project_sync(value: &Value) -> String {
             .unwrap_or_else(|| "-".to_owned())
     };
     detail(&[
-        ("version", string(value, "kbotsVersion").unwrap_or_else(|| "?".to_owned())),
-        ("previous", string(value, "previousVersion").unwrap_or_else(|| "-".to_owned())),
+        (
+            "version",
+            string(value, "kbotsVersion").unwrap_or_else(|| "?".to_owned()),
+        ),
+        (
+            "previous",
+            string(value, "previousVersion").unwrap_or_else(|| "-".to_owned()),
+        ),
         ("created", format_list_original("created")),
         ("updated", format_list_original("updated")),
         ("current", format_list_original("current")),
         ("kept", format_list_original("kept")),
         ("backups", format_list_original("backups")),
-        ("stamp", string(value, "stamp").unwrap_or_else(|| "-".to_owned())),
+        (
+            "stamp",
+            string(value, "stamp").unwrap_or_else(|| "-".to_owned()),
+        ),
     ])
 }
 

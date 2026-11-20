@@ -73,12 +73,7 @@ pub fn status_section(value: &Value) -> String {
     };
     let total = bots.get("total").and_then(Value::as_u64).unwrap_or(0);
     let by_health = bots.get("byHealth").cloned().unwrap_or(Value::Null);
-    let count = |key: &str| {
-        by_health
-            .get(key)
-            .and_then(Value::as_u64)
-            .unwrap_or(0)
-    };
+    let count = |key: &str| by_health.get(key).and_then(Value::as_u64).unwrap_or(0);
     let problems = bots
         .get("problems")
         .and_then(Value::as_array)
@@ -95,7 +90,10 @@ pub fn status_section(value: &Value) -> String {
         count("stopped"),
     ));
     for problem in problems.iter().take(10) {
-        let level = problem.get("level").and_then(Value::as_str).unwrap_or("warning");
+        let level = problem
+            .get("level")
+            .and_then(Value::as_str)
+            .unwrap_or("warning");
         let (glyph, color) = level_glyph(level);
         let agent = problem
             .get("agentId")
@@ -107,10 +105,7 @@ pub fn status_section(value: &Value) -> String {
             .and_then(Value::as_str)
             .map(|id| format!(" · {id}"))
             .unwrap_or_default();
-        let message = problem
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("");
+        let message = problem.get("message").and_then(Value::as_str).unwrap_or("");
         out.push_str(&format!(
             "          {color}{glyph}{RESET} {BOLD}{agent}{RESET} {role}{task}: {message}\n"
         ));
@@ -149,9 +144,7 @@ pub fn agents_section(value: &Value) -> String {
         if message.is_empty() {
             continue;
         }
-        out.push_str(&format!(
-            "      {color}{code}{RESET} {message}\n"
-        ));
+        out.push_str(&format!("      {color}{code}{RESET} {message}\n"));
         if let Some(hint) = hint {
             out.push_str(&format!("      {DIM}→ {hint}{RESET}\n"));
         }
@@ -175,7 +168,9 @@ pub fn agent_section(value: &Value) -> String {
         out.push_str(&format!("{BOLD}task{RESET}      {id} ({status})\n"));
     }
     if message.is_empty() {
-        out.push_str(&format!("{BOLD}health{RESET}    {color}{glyph} {level}{RESET}\n"));
+        out.push_str(&format!(
+            "{BOLD}health{RESET}    {color}{glyph} {level}{RESET}\n"
+        ));
     } else {
         out.push_str(&format!(
             "{BOLD}health{RESET}    {color}{glyph} {level} · {code}{RESET}\n          {message}\n"
