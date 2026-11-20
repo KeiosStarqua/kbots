@@ -23,6 +23,8 @@ pub fn render(method: &str, value: &Value, show_finished: bool) -> Option<String
         "projects.list" => Some(render_projects_list(value)),
         "projects.get" => Some(render_project_get(value)),
         "approvals.approve" => Some(render_approval(value)),
+        "approvals.list" => Some(render_approvals_list(value)),
+        "events.list" => Some(render_events(value)),
         "agents.list" => Some(render_agents(value, show_finished)),
         "agents.start" | "agents.show" => Some(render_agent_detail(value)),
         "agents.stop" => Some(render_agent_action(value, "stopped")),
@@ -540,6 +542,44 @@ fn render_approval(value: &Value) -> String {
     } else {
         format!("{id} {status}")
     }
+}
+
+fn render_approvals_list(value: &Value) -> String {
+    let items = list_items(value);
+    if items.is_empty() {
+        return "No approvals.".to_owned();
+    }
+    let rows: Vec<Vec<String>> = items
+        .iter()
+        .map(|item| {
+            vec![
+                string(item, "id").unwrap_or_else(|| "?".to_owned()),
+                string(item, "status").unwrap_or_else(|| "?".to_owned()),
+                string(item, "operation").unwrap_or_else(|| "-".to_owned()),
+                truncate_chars(&string(item, "detail").unwrap_or_else(|| "-".to_owned()), 60),
+                string(item, "createdAt").unwrap_or_else(|| "-".to_owned()),
+            ]
+        })
+        .collect();
+    table(&["ID", "STATUS", "OPERATION", "DETAIL", "CREATED"], &rows)
+}
+
+fn render_events(value: &Value) -> String {
+    let items = list_items(value);
+    if items.is_empty() {
+        return "No events.".to_owned();
+    }
+    items
+        .iter()
+        .map(|item| {
+            let ts = string(item, "ts").unwrap_or_else(|| "-".to_owned());
+            let ts = ts.get(0..19).map(str::to_owned).unwrap_or(ts).replace('T', " ");
+            let kind = string(item, "kind").unwrap_or_else(|| "?".to_owned());
+            let message = truncate_chars(&string(item, "message").unwrap_or_default(), 110);
+            format!("{DIM}{ts}{RESET}  {kind}  {message}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn session_short(session_id: Option<&str>) -> String {

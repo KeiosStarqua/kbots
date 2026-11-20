@@ -81,6 +81,19 @@ enum Commands {
         #[command(subcommand)]
         command: ProjectCommands,
     },
+    /// Show the daemon activity log, newest first.
+    Events {
+        /// Maximum number of events (1-500, default 100).
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+    /// List approvals (pending by default).
+    #[command(visible_alias = "appr")]
+    Approvals {
+        /// Filter: pending (default) or approved.
+        #[arg(long)]
+        status: Option<String>,
+    },
     /// Approve a pending protected operation.
     Approve {
         /// Approval identifier.
@@ -112,11 +125,14 @@ enum TaskCommands {
         #[arg(long)]
         detail: Option<String>,
     },
-    /// List tasks, optionally filtered by project.
+    /// List tasks, optionally filtered by project and status.
     #[command(visible_alias = "ls")]
     List {
         #[arg(long, short = 'p')]
         project: Option<String>,
+        /// Only tasks in this status (queued, researching, planning, delegating, running, review, blocked, done, failed, canceled).
+        #[arg(long)]
+        status: Option<String>,
     },
     /// Show one task.
     Show { task_id: String },
@@ -301,6 +317,8 @@ fn print_json(value: &Value) {
 fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> {
     let request = match command {
         Commands::Status => ("system.status", json!({})),
+        Commands::Events { limit } => ("events.list", json!({ "limit": limit })),
+        Commands::Approvals { status } => ("approvals.list", json!({ "status": status })),
         Commands::Tasks { command } => match command {
             TaskCommands::Add {
                 title,
@@ -317,9 +335,10 @@ fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> 
                 }
                 ("tasks.create", params)
             }
-            TaskCommands::List { project } => {
-                ("tasks.list", json!({ "project": scoped_project(project) }))
-            },
+            TaskCommands::List { project, status } => (
+                "tasks.list",
+                json!({ "project": scoped_project(project), "status": status }),
+            ),
             TaskCommands::Show { task_id } => ("tasks.get", json!({ "taskId": task_id })),
             TaskCommands::Cancel { task_id } => ("tasks.cancel", json!({ "taskId": task_id })),
             TaskCommands::Message { task_id, text } => (
