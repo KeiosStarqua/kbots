@@ -23,27 +23,39 @@ project (plus `herdr` state and `liveTerminals`), pending Approvals, and the
 Activity log (`events.list`, newest first). Section navigation supports
 arrows, `h/j/k/l`, `n/p`, and `1`–`7`.
 
-The Codex page (section 1 of the Full layout) is a real interactive Codex CLI running in an
-embedded pseudo-terminal (`portable-pty` → `vt100` → `tui-term`), spawned as
-`codex --dangerously-bypass-approvals-and-sandbox` (yolo mode), running
-with its cwd inside the project's `.agents/bot/router/` folder (the task-router
+The Codex page (section 1 of the Full layout) is a real interactive Codex CLI
+owned by [herdr-core](https://github.com/ogulcancelik/herdr-core) (`hc`), the
+same way every other kbots terminal is run. `hc` holds the PTY; the TUI is only
+a viewer attached to it over `hc connect`'s framed JSON-RPC stream
+(`terminal.attach`, then DATA/CREDIT/RESIZE/CLOSE frames). The terminal is
+named and labelled by kbots (`kbots-codex-<task>-<scope>`, labels
+`kbots.codex=1`, `kbots.scope=<cwd hash>`, `kbots.task=<binding>`), runs
+`codex --dangerously-bypass-approvals-and-sandbox` (yolo mode) with its cwd
+inside the project's `.agents/bot/router/` folder (the task-router
 instructions for Codex). When the folder is missing, it is scaffolded from the
 embedded template automatically (identical to `kb project sync`; never
 overwrites existing files); if scaffolding fails, the terminal falls back to
-the project root. Every key
-except the host chord `Ctrl+]` goes to Codex; `Ctrl+]` returns to Overview.
-The terminal is bound to "free" or to one open task: `Ctrl+←`/`Ctrl+→` cycle
-the binding, and the bound task's `TASK-id`/title is the spawn context. The
-pane is the project's one router bot, so it owns exactly one Codex process:
-the binding is stored as a `TASK-id` (list churn never re-points it), and
-switching the binding closes the previous Codex and respawns with the new
-context — ptys are never accumulated per task.
-The mouse wheel (or `Ctrl+Shift+↑`/`Ctrl+Shift+↓`) scrolls the 1000-line
-scrollback; `Ctrl+R` respawns a dead Codex. A green `✕ exit codex` button at
-the top-right border of the Codex pane leaves the page with one click
-(touch/Moshi friendly), alongside `Ctrl+]`. Quitting kbots kills the
-terminal children. Under Moshi/SSH everything is a keyboard, so the chords
-matter.
+the project root.
+
+Every key except the host chord `Ctrl+]` goes to Codex, encoded from the
+terminal's own modes: kitty keyboard-protocol flags (Codex pushes `CSI >7u`),
+application cursor keys, and the mouse protocol. `Ctrl+]` returns to Overview.
+The pane is bound to "free" or to one open task; `Ctrl+←`/`Ctrl+→` cycle the
+binding, and the bound task's `TASK-id`/title is the spawn context. The binding
+is stored as a `TASK-id` (list churn never re-points it). Switching the binding
+detaches the current viewer and attaches the other task's terminal; both Codex
+sessions keep running in `hc`, so switching no longer loses context.
+
+The mouse wheel goes to Codex when it asked for mouse reports (it enables
+`1000/1002/1003`), and to the local 1000-line scrollback otherwise;
+`Ctrl+Shift+↑`/`Ctrl+Shift+↓` always scroll locally. `Ctrl+R` starts a fresh
+Codex terminal when the attached one has exited, and re-attaches when it is
+still live. A green `✕ exit codex` button at the top-right border of the Codex
+pane leaves the page with one click (touch/Moshi friendly), alongside `Ctrl+]`.
+Quitting kbots only detaches: Codex keeps running in herdr-core and can be
+re-attached (by the TUI, `hc attach`, or the GUI) or inspected with `hc ls` and
+`hc read`. Set `HC_BIN` to use an `hc` binary that is not on `PATH`. Under
+Moshi/SSH everything is a keyboard, so the chords matter.
 The dashboard polls every 5 seconds only while running, renders only on input or data
 change, shows a persistent `daemon unreachable` banner (with inline errors
 everywhere else) when the socket is gone, and keeps last-good data on

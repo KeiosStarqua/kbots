@@ -1,6 +1,7 @@
 mod codex_term;
 mod rpc;
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -28,7 +29,7 @@ use rpc::{
     TaskBrief, TaskMessage, brief_entry_line, truncate_chars,
 };
 
-use codex_term::{CodexTerminals, key_to_pty_bytes};
+use codex_term::CodexTerminals;
 
 const NAVIGATION: [&str; 7] = [
     "Codex",
@@ -213,6 +214,9 @@ struct App {
     overlay: Option<Overlay>,
     overlay_scroll: usize,
     codex_terms: CodexTerminals,
+    /// Last drawn Codex pane, so the attached terminal's size and mouse
+    /// coordinates match the area it is really shown in.
+    codex_pane: Cell<Rect>,
     /// Binding for the embedded Codex terminal: None = free session, Some(id)
     /// = bound to that open task. Stored as a task id, not a list index, so
     /// task churn never re-points the terminal at another task.
@@ -262,6 +266,7 @@ impl App {
             overlay: None,
             overlay_scroll: 0,
             codex_terms: CodexTerminals::default(),
+            codex_pane: Cell::new(Rect::default()),
             codex_binding: None,
             codex_spawn_error: None,
             codex_exited: Vec::new(),
@@ -758,7 +763,8 @@ impl App {
         let context = info.map(|(id, _, title)| {
             format!("Continue the kbots task {id}: {title}. Work in this repository.")
         });
-        match codex_term::CodexTerm::spawn(24, 80, &cwd, context.as_deref()) {
+        let (rows, cols) = self.codex_terminal_size();
+        match codex_term::CodexTerm::spawn(key, rows, cols, &cwd, context.as_deref()) {
             Ok(term) => {
                 self.codex_terms.insert(key.to_string(), term);
                 self.codex_exited.retain(|k| k != key);
@@ -776,6 +782,17 @@ impl App {
         self.codex_exited.retain(|k| k != key);
         self.codex_spawn_error = None;
         self.spawn_codex(key);
+    }
+
+    /// Size of the attached terminal: the Codex pane's inner area when it has
+    /// been drawn, else roughly the body size (header/footer/borders on top).
+    fn codex_terminal_size(&self) -> (u16, u16) {
+        let pane = self.codex_pane.get();
+        if pane.width > 2 && pane.height > 2 {
+            return (pane.height - 2, pane.width - 2);
+        }
+        let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
+        (rows.saturating_sub(6).max(1), cols.saturating_sub(2).max(1))
     }
 
     /// Reap exited processes and spawn the bound terminal if missing.
@@ -806,13 +823,9 @@ impl App {
                 self.quit_at = Some(Instant::now() + CODEX_EXIT_GRACE);
             }
         }
-        if let Ok((cols, rows)) = crossterm::terminal::size() {
-            // Sync the pty to roughly the body size (header/footer/borders on top).
-            let pty_rows = rows.saturating_sub(6).max(1);
-            let pty_cols = cols.saturating_sub(2).max(1);
-            if let Some(term) = self.codex_terms.get_mut(&key) {
-                term.resize(pty_rows, pty_cols);
-            }
+        let (pty_rows, pty_cols) = self.codex_terminal_size();
+        if let Some(term) = self.codex_terms.get_mut(&key) {
+            term.resize(pty_rows, pty_cols);
         }
         if self.codex_terms.get(&key).is_none() && self.codex_spawn_error.is_none() {
             self.spawn_codex(&key);
@@ -1062,7 +1075,11 @@ impl App {
                 KeyCode::Char(']') | KeyCode::Char('5') if control
             ) || (control && matches!(code, KeyCode::Left | KeyCode::Right | KeyCode::Char('r')))
                 || (control && shift && matches!(code, KeyCode::Up | KeyCode::Down));
-            if !intercepted && let Some(bytes) = key_to_pty_bytes(&key) {
+            if !intercepted && let Some(bytes) = self
+                .codex_terms
+                .get(&binding_key)
+                .and_then(|term| term.key_bytes(&key))
+            {
                 if let Some(term) = self.codex_terms.get(&binding_key) {
                     let _ = term.write_input(&bytes);
                 }
@@ -1187,29 +1204,55 @@ impl App {
     }
 
     fn handle_mouse(&mut self, kind: MouseEventKind, column: u16, row: u16, width: u16) {
-        // Codex page: the wheel drives the pty scrollback; a left click on the
-        // exit button leaves the page.
+        // Codex page: the exit button, then the attached program (when it
+        // asked for mouse reports), then the local scrollback.
         if self.mode == Mode::Simple || self.active_section() == CODEX_SECTION {
-            match kind {
-                MouseEventKind::ScrollUp | MouseEventKind::ScrollLeft => self.scroll_codex(3),
-                MouseEventKind::ScrollDown | MouseEventKind::ScrollRight => self.scroll_codex(-3),
-                MouseEventKind::Down(MouseButton::Left) => {
-                    let button = self.codex_exit_button_rect(width);
-                    let hit = column >= button.x
-                        && column < button.x + button.width
-                        && row == button.y;
-                    if hit {
-                        if self.mode == Mode::Simple {
-                            // Simple layout has no other page: ✕ quits the TUI.
-                            // We can't return true from here, so emulate quit
-                            // via the quit flag below.
-                            self.quit = true;
-                        } else {
-                            self.selected = 1; // back to Overview
-                        }
+            if matches!(kind, MouseEventKind::Down(MouseButton::Left)) {
+                let button = self.codex_exit_button_rect(width);
+                let hit = column >= button.x
+                    && column < button.x + button.width
+                    && row == button.y;
+                if hit {
+                    if self.mode == Mode::Simple {
+                        // Simple layout has no other page: ✕ quits the TUI.
+                        self.quit = true;
+                    } else {
+                        self.selected = 1; // back to Overview
                     }
+                    return;
                 }
-                _ => {}
+            }
+            let key = self.codex_binding_key();
+            let pane = self.codex_pane.get();
+            let inside = column > pane.x
+                && column < pane.x + pane.width.saturating_sub(1)
+                && row > pane.y
+                && row < pane.y + pane.height.saturating_sub(1);
+            let x = column.saturating_sub(pane.x);
+            let y = row.saturating_sub(pane.y);
+            let forwarded = self
+                .codex_terms
+                .get(&key)
+                .is_some_and(|term| match kind {
+                    MouseEventKind::ScrollUp | MouseEventKind::ScrollLeft => {
+                        inside && term.wheel(true, x, y)
+                    }
+                    MouseEventKind::ScrollDown | MouseEventKind::ScrollRight => {
+                        inside && term.wheel(false, x, y)
+                    }
+                    MouseEventKind::Down(_) | MouseEventKind::Up(_) | MouseEventKind::Drag(_) => {
+                        inside && term.mouse(kind, x, y)
+                    }
+                    _ => false,
+                });
+            if !forwarded {
+                match kind {
+                    MouseEventKind::ScrollUp | MouseEventKind::ScrollLeft => self.scroll_codex(3),
+                    MouseEventKind::ScrollDown | MouseEventKind::ScrollRight => {
+                        self.scroll_codex(-3)
+                    }
+                    _ => {}
+                }
             }
             return;
         }
@@ -2626,9 +2669,13 @@ fn render_activity(frame: &mut Frame, area: Rect, app: &App) {
 /// (see `codex_term.rs`). kbots forwards keys and renders the pty screen;
 /// it never interprets Codex output.
 fn render_codex_section(frame: &mut Frame, area: Rect, app: &App) {
+    app.codex_pane.set(area);
     let key = app.codex_binding_key();
     let exited = app.codex_exited.iter().any(|entry| entry == &key);
     let mut title = format!(" Codex · {}", app.codex_binding_label());
+    if let Some(term) = app.codex_terms.get(&key) {
+        title.push_str(&format!(" · hc {}", term.address()));
+    }
     if exited {
         title.push_str(" · exited");
     }
