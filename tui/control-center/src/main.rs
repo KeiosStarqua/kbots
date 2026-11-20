@@ -43,6 +43,9 @@ const NAVIGATION: [&str; 7] = [
 const CODEX_SECTION: usize = 0;
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+/// How long a Simple-mode Codex exit screen stays visible before the TUI
+/// follows the process out.
+const CODEX_EXIT_GRACE: Duration = Duration::from_millis(1500);
 const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const INBOX_KIND_ORDER: [&str; 5] = ["approval", "blocked", "failed", "queued", "review"];
 
@@ -216,8 +219,12 @@ struct App {
     codex_spawn_error: Option<String>,
     /// Keys of terminals whose process has exited (screen stays visible).
     codex_exited: Vec<String>,
-    /// Set by mouse-click exit in Simple mode; checked by the frame loop.
+    /// Set by mouse-click exit in Simple mode and by the embedded Codex
+    /// process exiting; checked by the frame loop.
     quit: bool,
+    /// Simple-mode Codex exited: quit once this instant passes (grace so a
+    /// fast crash's final screen is readable before the TUI closes).
+    quit_at: Option<Instant>,
 }
 
 impl App {
@@ -258,6 +265,7 @@ impl App {
             codex_spawn_error: None,
             codex_exited: Vec::new(),
             quit: false,
+            quit_at: None,
         }
     }
 
@@ -735,6 +743,7 @@ impl App {
             Ok(term) => {
                 self.codex_terms.insert(key.to_string(), term);
                 self.codex_exited.retain(|k| k != key);
+                self.quit_at = None;
                 self.codex_spawn_error = None;
             }
             Err(error) => {
@@ -762,6 +771,13 @@ impl App {
             && !self.codex_exited.iter().any(|k| k == &key)
         {
             self.codex_exited.push(key.clone());
+            // Simple mode *is* the Codex pane; when the process ends there
+            // is nothing left to do, so follow it out (same as Ctrl+]) after
+            // a short grace that keeps a crash's last screen readable.
+            // --full keeps the page and just marks it exited.
+            if self.mode == Mode::Simple {
+                self.quit_at = Some(Instant::now() + CODEX_EXIT_GRACE);
+            }
         }
         if let Ok((cols, rows)) = crossterm::terminal::size() {
             // Sync the pty to roughly the body size (header/footer/borders on top).
@@ -1375,6 +1391,9 @@ fn main() -> io::Result<()> {
             if codex_active {
                 // Codex output is asynchronous; repaint on a short cadence.
                 app.ensure_codex();
+                if app.quit || app.quit_at.is_some_and(|at| Instant::now() >= at) {
+                    break Ok(());
+                }
                 needs_draw = true;
             }
             if app.refresh_due() {

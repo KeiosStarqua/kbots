@@ -6,9 +6,12 @@ the UI restores the terminal and does not stop the backend or its agents.
 
 The default TUI is a minimal Codex chat terminal: a one-line header
 (`kbots · CODEX · LIVE/OFFLINE`) with a `✕ exit` button (or `Ctrl+]`) to quit,
-and a fullscreen embedded Codex CLI below it — no other pages. `kb tui --full`
-(or `--full` on `kbots-tui`) opens the complete operator dashboard described
-below instead.
+and a fullscreen embedded Codex CLI below it — no other pages. Because the
+Codex pane is the whole window, the TUI follows the Codex process out: when
+Codex exits (running `exit`, or disconnecting), the final screen stays visible
+for a short grace (~1.5 s) and the TUI then quits. `kb tui --full` (or
+`--full` on `kbots-tui`) opens the complete operator dashboard described
+below instead; there an exited Codex only marks the section `· exited`.
 
 The dashboard connects to the kbots daemon over its local Unix socket
 (JSON-RPC 2.0, one request per connection; discovery order `KBOTS_SOCKET` →

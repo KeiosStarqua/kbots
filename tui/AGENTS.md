@@ -16,6 +16,7 @@
 - The bottom composer does not call the router: `@N <text>` messages task N directly; `/brief`, `/inbox`, `/tasks`, `/done N`, `/blocked N` work as before; unknown plain text shows a hint, not an RPC.
 - Section navigation (Full layout): arrows, `h/j/k/l`, `n/p`, `1`–`7` (`1` = Codex), plus Moshi-style gesture chords behind the `Ctrl+B` prefix; wheel cycles sections off the Codex page (on the Codex page it scrolls the pty scrollback). Below 112 columns the dashboard switches to a compact single-column view; very short terminals show a summary and a resize hint.
 - It must restore the terminal on normal exit and on panics (RAII guards; mouse capture disabled on exit). v2 daemon methods missing from the running daemon surface as `daemon not updated yet`, never a crash.
+- Simple mode follows the embedded Codex process: when it exits, the final screen stays visible for a short grace (~1.5 s) and the TUI quits (same effect as `Ctrl+]`). `--full` keeps the dashboard open and only marks the Codex section `· exited`.
 
 ## Work Guidance
 
