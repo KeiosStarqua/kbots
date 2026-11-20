@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 
 mod project_config;
 mod render;
+mod render_bots;
 
 /// Walk up from the current directory and return the nearest directory that
 /// contains a `.agents/bot` folder (i.e. a project `kbots project add` has

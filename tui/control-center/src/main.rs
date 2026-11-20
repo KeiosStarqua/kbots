@@ -1919,6 +1919,43 @@ fn agent_status_style(status: &str) -> Style {
     }
 }
 
+/// Colour for a derived health level (`ok`, `waiting`, `warning`, `error`, …).
+fn health_style(level: &str) -> Style {
+    match level {
+        "error" => Style::default().fg(Color::Red).bold(),
+        "warning" => Style::default().fg(Color::Yellow),
+        "ok" => Style::default().fg(Color::LightGreen),
+        "waiting" => Style::default().fg(Color::LightBlue),
+        _ => Style::default().fg(Color::DarkGray),
+    }
+}
+
+fn health_glyph(level: &str) -> &'static str {
+    match level {
+        "error" => "✖",
+        "warning" => "⚠",
+        "ok" => "✔",
+        _ => "·",
+    }
+}
+
+fn agent_health(agent: &rpc::ManagedAgent) -> (&str, &str, &str) {
+    let report = agent.report.as_ref();
+    let level = report
+        .and_then(|report| report.health.as_ref())
+        .map(|health| health.level.as_str())
+        .unwrap_or("unknown");
+    let activity = report
+        .and_then(|report| report.activity.as_ref())
+        .map(|activity| activity.detail.as_str())
+        .unwrap_or("");
+    let message = report
+        .and_then(|report| report.health.as_ref())
+        .map(|health| health.message.as_str())
+        .unwrap_or(agent.last_error.as_deref().unwrap_or(""));
+    (level, activity, message)
+}
+
 fn render_agents_panel(frame: &mut Frame, area: Rect, app: &App, focused: bool) {
     let block = Block::default()
         .title(" Managed agents ")
@@ -1946,6 +1983,7 @@ fn render_agents_panel(frame: &mut Frame, area: Rect, app: &App, focused: bool) 
     ]));
     for agent in app.agents.managed.iter().take(6) {
         let id = truncate_chars(&agent.id, 8);
+        let (level, _, _) = agent_health(agent);
         lines.push(Line::from(vec![
             Span::styled(format!("{id:<10} "), Style::default().fg(Color::Cyan)),
             Span::raw(format!("{:<5} ", truncate_chars(&agent.role, 4))),
@@ -1954,6 +1992,7 @@ fn render_agents_panel(frame: &mut Frame, area: Rect, app: &App, focused: bool) 
                 format!("{:<10} ", truncate_chars(&agent.status, 8)),
                 agent_status_style(&agent.status),
             ),
+            Span::styled(format!("{} ", health_glyph(level)), health_style(level)),
             Span::styled(managed_live_label(agent), Style::default().fg(Color::Gray)),
         ]));
     }
@@ -2313,6 +2352,7 @@ fn render_agents(frame: &mut Frame, area: Rect, app: &App) {
         ]));
         for agent in agents {
             let id = truncate_chars(&agent.id, 8);
+            let (level, activity, message) = agent_health(agent);
             lines.push(Line::from(vec![
                 Span::raw("  "),
                 Span::styled(format!("{id:<9} "), Style::default().fg(Color::Cyan)),
@@ -2322,14 +2362,33 @@ fn render_agents(frame: &mut Frame, area: Rect, app: &App) {
                     format!("{:<9} ", truncate_chars(&agent.status, 8)),
                     agent_status_style(&agent.status),
                 ),
+                Span::styled(format!("{} ", health_glyph(level)), health_style(level)),
                 Span::styled(managed_live_label(agent), Style::default().fg(Color::Gray)),
             ]));
-            if let Some(error) = agent.last_error.as_deref() {
+            if !activity.is_empty() {
                 lines.push(Line::from(vec![
                     Span::raw("     "),
                     Span::styled(
-                        format!("lastError: {}", truncate_chars(error, 60)),
-                        Style::default().fg(Color::Red),
+                        truncate_chars(activity, 60).to_string(),
+                        Style::default().fg(Color::Gray),
+                    ),
+                    if let Some(task) = agent.report.as_ref().and_then(|report| report.task.as_ref()) {
+                        Span::raw(format!(
+                            " · {} {}",
+                            task.task_id,
+                            task.status
+                        ))
+                    } else {
+                        Span::raw(String::new())
+                    },
+                ]));
+            }
+            if !message.is_empty() {
+                lines.push(Line::from(vec![
+                    Span::raw("     "),
+                    Span::styled(
+                        truncate_chars(message, 70).to_string(),
+                        health_style(level),
                     ),
                 ]));
             }

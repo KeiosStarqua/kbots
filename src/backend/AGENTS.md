@@ -30,6 +30,7 @@
 
 - `bun run tsc --noEmit` (from repo root) after code changes.
 - `bun run control --list-sessions` for read-only service verification.
+- `bun run src/backend/bots/health.selfcheck.ts` for the bot report rules (pure, no daemon or herdr).
 
 ## Child DOX Index
 

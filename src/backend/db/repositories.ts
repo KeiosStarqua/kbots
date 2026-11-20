@@ -48,6 +48,8 @@ export interface TaskRow {
   canceledAt: string | null
   goal: string | null
   detail: string | null
+  recoveries: number
+  lastRecoveryAt: string | null
 }
 
 export type ApprovalStatus = "pending" | "approved"
@@ -117,6 +119,8 @@ interface TaskRecord {
   canceled_at: string | null
   goal: string | null
   detail: string | null
+  recoveries: number
+  last_recovery_at: string | null
 }
 
 interface ApprovalRecord {
@@ -165,6 +169,8 @@ function toTaskRow(record: TaskRecord): TaskRow {
     canceledAt: record.canceled_at,
     goal: record.goal ?? null,
     detail: record.detail ?? null,
+    recoveries: record.recoveries ?? 0,
+    lastRecoveryAt: record.last_recovery_at ?? null,
   }
 }
 
@@ -588,7 +594,9 @@ export function listQueuedUserMessagesForInbox(
     .query(
       `SELECT m.*, t.id AS t_id, t.title AS t_title, t.status AS t_status, t.project_id AS t_project_id,
               t.created_at AS t_created_at, t.updated_at AS t_updated_at, t.canceled_at AS t_canceled_at,
-              t.goal AS t_goal, t.detail AS t_detail, projects.path AS t_project_path
+              t.goal AS t_goal, t.detail AS t_detail,
+              t.recoveries AS t_recoveries, t.last_recovery_at AS t_last_recovery_at,
+              projects.path AS t_project_path
        FROM task_messages m
        JOIN tasks t ON t.id = m.task_id
        LEFT JOIN projects ON projects.id = t.project_id
@@ -605,6 +613,8 @@ export function listQueuedUserMessagesForInbox(
       t_canceled_at: string | null
       t_goal: string | null
       t_detail: string | null
+      t_recoveries: number
+      t_last_recovery_at: string | null
       t_project_path: string | null
     }>
   return rows.map((row) => ({
@@ -620,6 +630,8 @@ export function listQueuedUserMessagesForInbox(
       canceled_at: row.t_canceled_at,
       goal: row.t_goal,
       detail: row.t_detail,
+      recoveries: row.t_recoveries ?? 0,
+      last_recovery_at: row.t_last_recovery_at ?? null,
     }),
   }))
 }
@@ -779,6 +791,14 @@ export function cancelTask(taskId: string, db: Database = getDb()): TaskRow | nu
   return existing
 }
 
+/**
+ * Note that a task's CEO was resumed after its terminal was lost. The
+ * maintenance loop bounds this with a per-task budget.
+ */
+export function recordRecovery(taskId: string, at: string, db: Database = getDb()): void {
+  db.query("UPDATE tasks SET recoveries = recoveries + 1, last_recovery_at = ? WHERE id = ?").run(at, taskId)
+}
+
 export function countTasks(
   db: Database = getDb(),
 ): { total: number; byStatus: Record<string, number> } {
@@ -880,6 +900,7 @@ export interface AgentRow {
   lastError: string | null
   lastOutcome: string | null
   lastOutcomeAt: string | null
+  stopReason: string | null
 }
 
 interface AgentRecord {
@@ -898,6 +919,7 @@ interface AgentRecord {
   last_error: string | null
   last_outcome: string | null
   last_outcome_at: string | null
+  stop_reason: string | null
 }
 
 const AGENT_ROLES: readonly AgentRole[] = ["ceo", "git", "ops", "worker"]
@@ -922,6 +944,7 @@ function toAgentRow(record: AgentRecord): AgentRow {
     lastError: record.last_error,
     lastOutcome: record.last_outcome ?? null,
     lastOutcomeAt: record.last_outcome_at ?? null,
+    stopReason: record.stop_reason ?? null,
   }
 }
 
@@ -1009,6 +1032,7 @@ export function updateAgent(
     lastError: string | null
     lastOutcome: string | null
     lastOutcomeAt: string | null
+    stopReason: string | null
   }>,
   db: Database = getDb(),
 ): AgentRow | null {
@@ -1023,6 +1047,7 @@ export function updateAgent(
   if ("lastError" in patch) { sets.push("last_error = ?"); values.push(patch.lastError ?? null) }
   if ("lastOutcome" in patch) { sets.push("last_outcome = ?"); values.push(patch.lastOutcome ?? null) }
   if ("lastOutcomeAt" in patch) { sets.push("last_outcome_at = ?"); values.push(patch.lastOutcomeAt ?? null) }
+  if ("stopReason" in patch) { sets.push("stop_reason = ?"); values.push(patch.stopReason ?? null) }
   if (sets.length === 0) return getAgent(agentId, db)
   sets.push("updated_at = ?")
   values.push(now())

@@ -10,7 +10,11 @@ const RESET: &str = "\x1b[0m";
 
 pub fn render(method: &str, value: &Value, show_finished: bool) -> Option<String> {
     match method {
-        "system.status" => Some(render_status(value)),
+        "system.status" => Some(format!(
+            "{}{}",
+            render_status(value),
+            crate::render_bots::status_section(value)
+        )),
         "tasks.create" | "tasks.cancel" => Some(render_task_write(value)),
         "tasks.list" => Some(render_tasks_list(value)),
         "tasks.get" => Some(render_task_get(value)),
@@ -25,8 +29,16 @@ pub fn render(method: &str, value: &Value, show_finished: bool) -> Option<String
         "approvals.approve" => Some(render_approval(value)),
         "approvals.list" => Some(render_approvals_list(value)),
         "events.list" => Some(render_events(value)),
-        "agents.list" => Some(render_agents(value, show_finished)),
-        "agents.start" | "agents.show" => Some(render_agent_detail(value)),
+        "agents.list" => Some(format!(
+            "{}{}",
+            render_agents(value, show_finished),
+            crate::render_bots::agents_section(value)
+        )),
+        "agents.start" | "agents.show" => Some(format!(
+            "{}{}",
+            render_agent_detail(value),
+            crate::render_bots::agent_section(value)
+        )),
         "agents.stop" => Some(render_agent_action(value, "stopped")),
         "agents.prompt" => Some(render_agent_action(value, "accepted")),
         "agents.interrupt" => Some(render_agent_interrupt(value)),

@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 6
+export const SCHEMA_VERSION = 8
 
 // v1 → v2 delta: the managed agent registry. Applied to databases already at
 // user_version 1; fresh databases run SCHEMA_DDL which embeds everything.
@@ -135,6 +135,20 @@ ALTER TABLE tasks ADD COLUMN last_nudged_at TEXT;
 CREATE INDEX IF NOT EXISTS idx_tasks_nudge ON tasks(status, last_nudged_at);
 `
 
+// v6 → v7 delta: dead-CEO recovery bookkeeping. A task whose CEO terminal was
+// lost is resumed a bounded number of times before it is marked blocked.
+export const V7_DDL = `
+ALTER TABLE tasks ADD COLUMN recoveries INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN last_recovery_at TEXT;
+`
+
+// v7 → v8 delta: why a row left the running state. `operator` marks a
+// deliberate `agents.stop`, so the maintenance recovery never resurrects an
+// agent the user stopped on purpose.
+export const V8_DDL = `
+ALTER TABLE agents ADD COLUMN stop_reason TEXT;
+`
+
 export const SCHEMA_DDL = `
 CREATE TABLE IF NOT EXISTS projects(
   id TEXT PRIMARY KEY,
@@ -156,7 +170,9 @@ CREATE TABLE IF NOT EXISTS tasks(
   goal TEXT,
   detail TEXT,
   nudges INTEGER NOT NULL DEFAULT 0,
-  last_nudged_at TEXT
+  last_nudged_at TEXT,
+  recoveries INTEGER NOT NULL DEFAULT 0,
+  last_recovery_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_nudge ON tasks(status, last_nudged_at);
 
@@ -203,7 +219,8 @@ CREATE TABLE IF NOT EXISTS agents(
   stopped_at TEXT,
   last_error TEXT,
   last_outcome TEXT,
-  last_outcome_at TEXT
+  last_outcome_at TEXT,
+  stop_reason TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project_id);

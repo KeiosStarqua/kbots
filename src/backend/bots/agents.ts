@@ -23,6 +23,7 @@ import {
   getLatestAgentByProjectRole,
   getProject,
   getProjectByPath,
+  getTask,
   getTaskCeoAgent,
   getTaskIdForAgent,
   listAgents,
@@ -54,6 +55,7 @@ import {
   type HerdrFullTerminal,
 } from "../adapters/herdr.ts"
 import { makeOpencodeClient } from "./opencode.ts"
+import { describeBot, isProblem, type BotReport } from "./health.ts"
 
 // Per-task cooldown for retrying dispatch of deferred (cap-blocked) tasks.
 // reconcile runs at boot and before every mutation — and `list` runs every
@@ -149,7 +151,20 @@ function managedPayload(
     stoppedAt: agent.stoppedAt,
     ...(agent.lastError ? { lastError: agent.lastError } : {}),
     live,
+    report: reportFor(agent, live),
   }
+}
+
+/**
+ * Derive the operator-facing report for an agent (`bots/health.ts`): activity,
+ * health, and the task it is bound to.
+ */
+export function reportFor(
+  agent: AgentRow,
+  live: Record<string, unknown> | null | undefined,
+): BotReport {
+  const taskId = getTaskIdForAgent(agent.id)
+  return describeBot(agent, live, taskId ? getTask(taskId) : null)
 }
 
 /** Probe the runtime backing an agent; never throws. */
@@ -239,7 +254,13 @@ export async function agentsStartHandler(params: Record<string, unknown>): Promi
 
   let agent: AgentRow
   if (resumable) {
-    agent = updateAgent(resumable.id, { status: "starting", mode, lastError: null, stoppedAt: null })!
+    agent = updateAgent(resumable.id, {
+      status: "starting",
+      mode,
+      lastError: null,
+      stoppedAt: null,
+      stopReason: null,
+    })!
   } else {
     agent = createAgent({
       projectId: project.projectId,
@@ -303,14 +324,62 @@ export async function agentsStartHandler(params: Record<string, unknown>): Promi
 }
 
 /**
+ * Resume an agent against its existing OpenCode session. Used by the
+ * maintenance loop when a CEO terminal was lost while its task was still open:
+ * the session (and its history) is reused, never recreated. A session the
+ * service no longer has throws, so the caller records the failure.
+ */
+export async function resumeAgentCore(agent: AgentRow, project: ProjectRow): Promise<AgentRow> {
+  const sessionId = agent.sessionId
+  if (!sessionId) throw new Error(`agent ${agent.id} has no session to resume`)
+  let current = updateAgent(agent.id, {
+    status: "starting",
+    lastError: null,
+    stoppedAt: null,
+    stopReason: null,
+  })!
+  try {
+    const { client } = await makeOpencodeClient()
+    await client.session.get({ sessionID: sessionId })
+    const spawned = await spawnTerminal(current, project.path, project.name, sessionId)
+    current = updateAgent(current.id, {
+      hcAddress: spawned.address,
+      name: spawned.name ?? current.name,
+      status: "running",
+      lastError: null,
+    })!
+    addEvent("bot.resumed", `Agent ${current.id} ${current.role} resumed after a lost terminal`, {
+      agentId: current.id,
+      role: current.role,
+      sessionId,
+      hcAddress: current.hcAddress,
+    })
+    return current
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    updateAgent(current.id, { status: "error", lastError: message })
+    addEvent("bot.resume_failed", `Agent ${current.id} resume failed: ${message}`, {
+      agentId: current.id,
+      message,
+    })
+    throw new Error(message)
+  }
+}
+
+/**
  * Stop one managed agent: kill its terminal (when it has one), mark the row
  * stopped, and log the event. The OpenCode session is never deleted — a
  * stopped agent can be restarted against the same session.
  *
- * Shared by `agents.stop` and the daemon maintenance reaper. When the
+ * Shared by `agents.stop` (reason `operator`) and the daemon maintenance
+ * reaper (`reaper`). `operator` is the marker dead-CEO recovery checks before
+ * resuming anything: a stop the user asked for is never overridden. When the
  * terminal kill fails the row is marked `error` and the failure is rethrown.
  */
-export async function stopAgentCore(agent: AgentRow): Promise<AgentRow> {
+export async function stopAgentCore(
+  agent: AgentRow,
+  reason: "operator" | "reaper" | "reconcile",
+): Promise<AgentRow> {
   if (agent.status === "stopped") return agent
   let current = updateAgent(agent.id, { status: "stopping" })!
   if (current.mode === "terminal" && current.hcAddress) {
@@ -326,7 +395,12 @@ export async function stopAgentCore(agent: AgentRow): Promise<AgentRow> {
       }
     }
   }
-  current = updateAgent(current.id, { status: "stopped", stoppedAt: new Date().toISOString(), lastError: null })!
+  current = updateAgent(current.id, {
+    status: "stopped",
+    stoppedAt: new Date().toISOString(),
+    lastError: null,
+    stopReason: reason,
+  })!
   addEvent("bot.stopped", `Agent ${current.id} ${current.role} stopped`, {
     agentId: current.id,
     mode: current.mode,
@@ -342,7 +416,7 @@ export async function agentsStopHandler(params: Record<string, unknown>): Promis
     return managedPayload(agent, null, undefined)
   }
   try {
-    const stopped = await stopAgentCore(agent)
+    const stopped = await stopAgentCore(agent, "operator")
     return managedPayload(stopped, null)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -445,7 +519,12 @@ export async function reconcileAgents(): Promise<{ checked: number; changed: num
         }
         const terminal = await getTerminal(agent.hcAddress)
         if (!terminal) {
-          updateAgent(agent.id, { status: "stopped", stoppedAt: new Date().toISOString(), lastError: "terminal missing" })
+          updateAgent(agent.id, {
+            status: "stopped",
+            stoppedAt: new Date().toISOString(),
+            lastError: "terminal missing",
+            stopReason: "terminal_missing",
+          })
           addEvent("bot.exited", `Agent ${agent.id} terminal missing`, { agentId: agent.id, ...(ceoTaskId ? { taskId: ceoTaskId } : {}) })
           changed += 1
           continue
@@ -456,6 +535,7 @@ export async function reconcileAgents(): Promise<{ checked: number; changed: num
             status: failed ? "error" : "stopped",
             stoppedAt: new Date().toISOString(),
             lastError: failed ? `terminal finished (exit ${terminal.exitCode ?? terminal.reason ?? "unknown"})` : null,
+            stopReason: failed ? "crash" : "exit",
           })
           addEvent(failed ? "bot.crashed" : "bot.exited", `Agent ${agent.id} terminal finished`, {
             agentId: agent.id,
@@ -478,6 +558,7 @@ export async function reconcileAgents(): Promise<{ checked: number; changed: num
           status: "stopped",
           stoppedAt: new Date().toISOString(),
           lastError: null,
+          stopReason: "legacy_headless",
         })
         addEvent(
           "agent.legacy_headless_closed",
@@ -783,11 +864,34 @@ export async function agentsListHandler(params: Record<string, unknown> = {}): P
     }),
   )
 
+  // One derived health view per bot, so the CLI, TUI, and GUI never have to
+  // re-implement the rules. `problems` is the short list an operator acts on.
+  const byHealth: Record<string, number> = { ok: 0, waiting: 0, warning: 0, error: 0, stopped: 0, unknown: 0 }
+  const problems: Array<Record<string, unknown>> = []
+  for (const payload of managed) {
+    const report = payload.report as BotReport
+    byHealth[report.health.level] = (byHealth[report.health.level] ?? 0) + 1
+    if (!isProblem(report)) continue
+    problems.push({
+      agentId: payload.id,
+      role: payload.role,
+      ...(typeof payload.projectName === "string" ? { projectName: payload.projectName } : {}),
+      status: payload.status,
+      level: report.health.level,
+      code: report.health.code,
+      message: report.health.message,
+      ...(report.health.hint ? { hint: report.health.hint } : {}),
+      ...(report.task ? { taskId: report.task.taskId } : {}),
+    })
+  }
+
   return {
     items,
     liveTerminals,
     filteredOut,
     managed,
+    bots: { total: managed.length, byHealth, problemCount: problems.length },
+    problems,
     registeredProjects: allProjects.length,
     generatedAt: new Date().toISOString(),
     ...(scope ? { filteredBy: scope.projectId } : {}),

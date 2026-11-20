@@ -171,6 +171,42 @@ key (esc) to the terminal. Nothing deletes a session.
 Single-writer: all mutations flow through the daemon; the TUI/GUI render the
 same registry.
 
+### Bot report (what a bot is doing, and what is wrong)
+
+Every `agents.list` item, `agents.show`, and `system.status.bots` carries a
+derived report (`src/backend/bots/health.ts`) — never stored:
+
+```json
+{
+  "activity": { "state": "idle", "detail": "idle · turn 3" },
+  "health": {
+    "level": "warning",
+    "code": "idle_with_open_task",
+    "message": "idle while task TASK-7 is running",
+    "hint": "the nudger kicks this task automatically (KBOTS_NUDGE)"
+  },
+  "task": { "taskId": "TASK-7", "title": "…", "status": "running", "updatedAt": "…" },
+  "live": { "state": "live", "status": "idle", "turn": 3 },
+  "lastOutcome": null,
+  "lastOutcomeAt": null
+}
+```
+
+Levels: `ok`, `waiting` (task waits on a human: `review`/`blocked`),
+`warning` (kbots has an automatic path — e.g. an idle CEO with an open task is
+what the nudger kicks), `error` (the bot cannot work until something is fixed),
+`stopped` (deliberate, not a problem), `unknown` (not probed). Codes worth
+knowing: `working`, `idle`, `idle_with_open_task`, `idle_task_finished`,
+`waiting_on_human`, `terminal_blocked`, `terminal_missing`,
+`terminal_finished`, `agent_error`, `ceo_stopped_with_open_task`,
+`ceo_recovering`, `ceo_stale_with_open_task`, `probe_failed`.
+
+`agents.list` also returns `bots.byHealth` (counts), `bots.problemCount`, and
+`problems` — the short actionable list (`agentId`, `role`, `level`, `code`,
+`message`, `hint`, `taskId`) that the CLI, TUI, and GUI render.
+`system.status` reports `bots` from the database only (no herdr probe, it is
+polled every second) and caps `problems` at 10.
+
 ## Auto-kick (nudge) — v6
 
 The daemon runs an auto-kick routine so tasks never stall silently when a
@@ -196,11 +232,11 @@ CEO session goes idle without marking its task done. Semantics:
 - Nudges are not user messages and do not enter `tasks.brief`/`tasks.inbox`.
   They are operational events, visible in `events.list` as `task.nudged`.
 
-## Maintenance loop (reconcile + reaper) — v7
+## Maintenance loop (reconcile + reaper + recovery) — v7
 
 The daemon runs one more timer besides the watcher and the nudger: a
 maintenance tick, default every 60 s (`KBOTS_REAP_INTERVAL_MS`, minimum 10 s).
-It does two things, in order:
+It does three things, in order:
 
 1. `reconcileAgents()` — the same probe every `agents.*` mutation runs, now
    also on a timer, so a terminal that exits between RPCs is noticed instead
@@ -209,6 +245,8 @@ It does two things, in order:
    status (`done`, `failed`, `canceled`) and has been quiet for the grace
    period (`KBOTS_REAP_GRACE_MS`, default 10 min, measured from the task's
    `updated_at`).
+3. Dead-CEO recovery — resumes a CEO whose terminal failed while its task is
+   still open (next section).
 
 Rules:
 
@@ -225,6 +263,36 @@ Rules:
 - `KBOTS_REAP=off` skips the reaper step only; the reconcile tick keeps
   running.
 - Overlapping ticks are skipped, so a slow reconcile cannot pile up.
+
+## Dead-CEO recovery — v7
+
+A task in `researching`/`planning`/`delegating`/`running` whose CEO terminal
+died would otherwise stall forever: the nudger only kicks live CEOs.
+
+- Recovery resumes the CEO against its **existing session** (`resumeAgentCore`
+  → the `agents.start` resume path), so the agent keeps its context; it then
+  prompts "your terminal was restarted, continue task X". The session is
+  never recreated and never deleted.
+- Eligible rows: `error` (failed terminal, non-zero exit, broken probe), and
+  `stopped` rows whose `stop_reason` is not `operator`. `agents.stop` sets
+  `stop_reason = operator` (schema v8), so a stop the user asked for is never
+  overridden — that case surfaces as `ceo_stopped_with_open_task` in the bot
+  report (hint: `kbots agents start ceo`). Reconcile stamps the other reasons
+  (`exit`, `crash`, `terminal_missing`, `legacy_headless`).
+- Only tasks updated within `KBOTS_RECOVER_WINDOW_MS` (default 2 h) are
+  resumed; older work is reported for a human instead of restarted.
+- Recovery respects the per-project CEO cap (`KBOTS_CEO_CAP`, default 4): at
+  the cap the attempt is deferred with a `task.ceo_recovery_deferred` event.
+- Bounded: each attempt spends one unit of `tasks.recoveries` (schema v7,
+  with `tasks.last_recovery_at`), max `KBOTS_RECOVER_MAX` (default 2),
+  rate-limited by `KBOTS_RECOVER_COOLDOWN_MS` (default 5 min). When the
+  budget is gone the task moves to `blocked` with a blocker note and a
+  `task.ceo_unrecoverable` event, so a crash loop ends in the inbox rather
+  than in an endless restart cycle. A failed attempt still spends a unit.
+- `KBOTS_RECOVER=off` disables the step; `KBOTS_RECOVER_MAX`,
+  `KBOTS_RECOVER_COOLDOWN_MS`, and `KBOTS_RECOVER_WINDOW_MS` tune it.
+- Events: `bot.resumed`, `bot.resume_failed`, `task.ceo_recovered`,
+  `task.ceo_recovery_failed`, `task.ceo_unrecoverable`.
 
 ## v2 methods (task-centric dispatch)
 

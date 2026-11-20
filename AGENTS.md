@@ -102,7 +102,8 @@ When the user requests a durable behavior change, record it here or in the relev
 - Session commands default to the current directory; pass `--directory` to select another project.
 - Prompting and interrupting sessions are explicit actions. Do not delete sessions.
 - Interrupting a session does not stop a recurring schedule attached to it.
-- The daemon maintenance loop (60 s) reconciles agents and stops CEO terminals whose task already reached `done`/`failed`/`canceled` after a grace period. That stop is the `agents stop` path — the session is kept. `KBOTS_REAP=off` disables the reaper step.
+- The daemon maintenance loop (60 s) reconciles agents, stops CEO terminals whose task already reached `done`/`failed`/`canceled` after a grace period, and resumes a CEO that crashed or exited while its task is still open (only tasks from the last `KBOTS_RECOVER_WINDOW_MS`, bounded by `KBOTS_RECOVER_MAX`/`KBOTS_RECOVER_COOLDOWN_MS`, never a row the user stopped with `agents stop`). Every stop and resume is the `agents stop`/`agents start` path — the session is kept. `KBOTS_REAP=off` / `KBOTS_RECOVER=off` disable the steps.
+- Every managed agent carries a derived `report` (activity, health level/code/message/hint, bound task) from `src/backend/bots/health.ts`. Clients render it; never re-implement the health rules in the CLI, TUI, or GUI.
 
 ### Work Guidance
 

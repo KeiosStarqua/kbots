@@ -509,6 +509,52 @@ pub struct ManagedAgent {
     /// `{outcome, …}` for headless. Rendered best-effort.
     #[serde(default)]
     pub live: Option<Value>,
+    /// Derived activity/health report (`src/backend/bots/health.ts`).
+    #[serde(default)]
+    pub report: Option<BotReport>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BotReport {
+    #[serde(default)]
+    pub activity: Option<BotActivity>,
+    #[serde(default)]
+    pub health: Option<BotHealth>,
+    #[serde(default)]
+    pub task: Option<BotTaskRef>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BotActivity {
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub state: String,
+    #[serde(default)]
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BotHealth {
+    #[serde(default)]
+    pub level: String,
+    #[serde(default)]
+    pub code: String,
+    #[serde(default)]
+    pub message: String,
+    #[serde(default)]
+    pub hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BotTaskRef {
+    #[serde(default)]
+    pub task_id: String,
+    #[serde(default)]
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

@@ -99,6 +99,37 @@ Herdr-managed terminal (the only mode; headless was retired 2026-11-19).
 Prompts are refused unless the agent is idle; `stop` keeps the OpenCode
 session and history, `start` resumes the same session.
 
+### What each bot is doing, and what is wrong
+
+`status`, `agents list`, and `agents show` end with a bot block derived by the
+daemon (`src/backend/bots/health.ts`). It answers two questions without
+guessing from process names:
+
+```text
+bots      3 (2 ok, 1 warning, 0 error, 0 stopped, 0 waiting)
+          ⚠ AGT-7 ceo · TASK-7: idle while task TASK-7 is running
+```
+
+`agents list` prints one line per managed bot — health glyph, activity
+(`working · turn 7`, `idle · turn 3`, `blocked`), and the task it is bound to —
+then the problem detail plus a hint for the codes that need action.
+
+```text
+bots
+  ✔ AGT-1 git  · no task idle · turn 45
+  ⚠ AGT-7 ceo  · TASK-7 running idle · turn 3
+      idle_with_open_task idle while task TASK-7 is running
+      → the nudger kicks this task automatically (KBOTS_NUDGE)
+```
+
+The daemon also acts on two of these on its own: a CEO terminal whose task is
+finished is reaped (session kept), and a CEO that crashed while its task is
+still open is resumed against the same session, bounded by
+`KBOTS_RECOVER_MAX` (default 2) and `KBOTS_RECOVER_COOLDOWN_MS` (default 5
+min). `KBOTS_REAP=off` / `KBOTS_RECOVER=off` disable those steps. Sessions are
+never deleted.
+
+
 Use `--socket PATH` or `KBOTS_SOCKET` to select the daemon socket. By default,
 the CLI uses `$XDG_RUNTIME_DIR/kbots.sock`, falling back to
 `$HOME/.local/run/kbots.sock`. The GUI and TUI paths can be overridden with

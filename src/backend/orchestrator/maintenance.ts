@@ -19,6 +19,8 @@
  *    writing its final report is not killed mid-turn.
  *  - A kill failure marks the row `error` and logs `agent.reap_failed`; the
  *    loop continues and retries the other agents on the next tick.
+ *  - Recovery skips a task older than `KBOTS_RECOVER_WINDOW_MS` (default 2 h):
+ *    resuming stale work is a human decision, and it is reported instead.
  *
  * Env:
  *  - `KBOTS_REAP=off` — skip the reaper step; the reconcile tick keeps running.
@@ -28,17 +30,35 @@
  */
 import {
   addEvent,
+  appendBriefBlocker,
+  countActiveCeoAgents,
+  getProject,
   getTask,
+  getTaskCeoAgent,
   getTaskIdForAgent,
+  isLiveAgentStatus,
   listLiveAgents,
+  listTasksByStatus,
+  recordRecovery,
+  transitionTaskStatus,
   TERMINAL_TASK_STATUSES,
   type AgentRow,
+  type TaskRow,
 } from "../db/repositories.ts"
-import { reconcileAgents, stopAgentCore } from "../bots/agents.ts"
+import {
+  promptAgentCore,
+  reconcileAgents,
+  resumeAgentCore,
+  stopAgentCore,
+} from "../bots/agents.ts"
+import { ACTIVE_TASK_STATUSES, recoveryWindowMs } from "../bots/health.ts"
 
 const DEFAULT_INTERVAL_MS = 60_000
 const DEFAULT_GRACE_MS = 10 * 60 * 1000
 const MIN_INTERVAL_MS = 10_000
+const DEFAULT_MAX_RECOVERIES = 2
+const DEFAULT_RECOVERY_COOLDOWN_MS = 5 * 60 * 1000
+const DEFAULT_CEO_CAP = 4
 
 function envMs(name: string, fallback: number, minimum: number): number {
   const raw = Number.parseInt(process.env[name] ?? "", 10)
@@ -88,7 +108,7 @@ export async function reapFinishedTerminals(now: number = Date.now()): Promise<n
   for (const agent of findReapableAgents(now)) {
     const taskId = getTaskIdForAgent(agent.id, "ceo")
     try {
-      await stopAgentCore(agent)
+      await stopAgentCore(agent, "reaper")
       stopped += 1
       addEvent("agent.reaped", `Agent ${agent.id} reaped: task ${taskId ?? "?"} finished`, {
         agentId: agent.id,
@@ -110,9 +130,129 @@ export async function reapFinishedTerminals(now: number = Date.now()): Promise<n
 
 export async function tick(): Promise<void> {
   // Reconcile may stop rows as it discovers dead terminals, so it runs first;
-  // the reaper then only sees agents that really are still running.
+  // the reaper then only sees agents that really are still running, and the
+  // recovery step sees the rows that just died.
   await reconcileAgents()
   await reapFinishedTerminals()
+  await recoverLostTaskCeos()
+}
+
+// -- dead-CEO recovery ------------------------------------------------------
+
+export function recoveryMax(): number {
+  const raw = Number.parseInt(process.env.KBOTS_RECOVER_MAX ?? "", 10)
+  return Number.isFinite(raw) && raw >= 0 ? raw : DEFAULT_MAX_RECOVERIES
+}
+
+export function recoveryCooldownMs(): number {
+  return envMs("KBOTS_RECOVER_COOLDOWN_MS", DEFAULT_RECOVERY_COOLDOWN_MS, 0)
+}
+
+export function recoveryEnabled(): boolean {
+  return process.env.KBOTS_RECOVER !== "off"
+}
+
+function ceoCap(): number {
+  const raw = Number.parseInt(process.env.KBOTS_CEO_CAP ?? "", 10)
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_CEO_CAP
+}
+
+function isRecoverable(agent: AgentRow): boolean {
+  if (agent.status === "error") return true
+  if (agent.status !== "stopped") return false
+  // `operator` marks a stop the user asked for: never override it.
+  return agent.stopReason !== "operator"
+}
+
+function isStale(task: TaskRow, now: number): boolean {
+  const updated = Date.parse(task.updatedAt)
+  return !Number.isFinite(updated) || now - updated > recoveryWindowMs()
+}
+
+/**
+ * Resume a CEO whose terminal died while its task is still open.
+ *
+ * Only `error` rows are resumed: a row is marked `error` by reconcile when the
+ * terminal failed (non-zero exit) or the probe broke, while a deliberate
+ * `agents.stop` leaves `stopped` — the operator's intent is never overridden.
+ * A stopped CEO with an open task shows up as `ceo_stopped_with_open_task` in
+ * the bot report instead.
+ *
+ * Each attempt spends one unit of the per-task budget (`tasks.recoveries`),
+ * so a crash loop ends with the task moved to `blocked` and a blocker note
+ * rather than with an endless restart cycle. Attempts are rate-limited by
+ * `KBOTS_RECOVER_COOLDOWN_MS`.
+ */
+export async function recoverLostTaskCeos(
+  now: number = Date.now(),
+): Promise<{ recovered: number; blocked: number }> {
+  if (!recoveryEnabled()) return { recovered: 0, blocked: 0 }
+  let recovered = 0
+  let blocked = 0
+  for (const task of listTasksByStatus([...ACTIVE_TASK_STATUSES])) {
+    const ceo = getTaskCeoAgent(task.taskId)
+    if (!ceo || isLiveAgentStatus(ceo.status)) continue
+    if (!isRecoverable(ceo)) continue
+    if (isStale(task, now)) continue
+
+    if (task.recoveries >= recoveryMax()) {
+      transitionTaskStatus(task.taskId, "blocked")
+      appendBriefBlocker(
+        task.taskId,
+        `CEO terminal lost ${task.recoveries} times; recovery budget exhausted, needs a human`,
+      )
+      addEvent("task.ceo_unrecoverable", `Task ${task.taskId} blocked: no recovery budget left`, {
+        taskId: task.taskId,
+        agentId: ceo.id,
+        recoveries: task.recoveries,
+      })
+      blocked += 1
+      continue
+    }
+
+    const lastAttempt = task.lastRecoveryAt ? Date.parse(task.lastRecoveryAt) : Number.NaN
+    if (Number.isFinite(lastAttempt) && now - lastAttempt < recoveryCooldownMs()) continue
+
+    const project = task.projectId ? getProject(task.projectId) : null
+    if (!project) continue
+    if (countActiveCeoAgents(project.projectId) >= ceoCap()) {
+      addEvent("task.ceo_recovery_deferred", `Task ${task.taskId} recovery deferred: CEO cap reached`, {
+        taskId: task.taskId,
+        agentId: ceo.id,
+        cap: ceoCap(),
+      })
+      continue
+    }
+
+    // Spend the budget before attempting: a spawn that keeps failing must not
+    // loop forever with a fresh counter every tick.
+    recordRecovery(task.taskId, new Date(now).toISOString())
+    try {
+      const resumed = await resumeAgentCore(ceo, project)
+      recovered += 1
+      addEvent("task.ceo_recovered", `Task ${task.taskId} CEO ${ceo.id} resumed`, {
+        taskId: task.taskId,
+        agentId: ceo.id,
+        recoveries: task.recoveries + 1,
+      })
+      try {
+        await promptAgentCore(
+          resumed,
+          `Your terminal was restarted after a crash. Continue task ${task.taskId} ("${task.title}"); it is still ${task.status}. Keep the task thread updated.`,
+        )
+      } catch {
+        // Busy or not ready yet — the nudger picks the task up on its own.
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      addEvent("task.ceo_recovery_failed", `Task ${task.taskId} recovery failed: ${message}`, {
+        taskId: task.taskId,
+        agentId: ceo.id,
+        message,
+      })
+    }
+  }
+  return { recovered, blocked }
 }
 
 /**
