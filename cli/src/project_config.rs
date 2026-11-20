@@ -377,6 +377,9 @@ fn write_stamp(
 /// that are byte-identical to the current templates, so later upgrades can
 /// update them. Customized files stay unrecorded (user-owned).
 fn stamp_if_missing(project_root: &Path) -> Result<(), Box<dyn Error>> {
+    // The stamp is local state: keep it ignored even when it already exists
+    // (older scaffolds predate the ignore entry).
+    ensure_stamp_ignored(project_root)?;
     if read_stamp(project_root).is_some() {
         return Ok(());
     }
