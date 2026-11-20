@@ -52,6 +52,18 @@ export class HerdrBusyError extends Error {
   }
 }
 
+/**
+ * The program accepted a prompt but cannot run it because its session is
+ * pinned to a model that no longer exists. Distinct from `HerdrBusyError` so
+ * callers can surface the fix instead of a generic "busy" refusal.
+ */
+export class HerdrModelUnavailableError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "HerdrModelUnavailableError"
+  }
+}
+
 const execFileAsync = promisify(execFile)
 const DEFAULT_TIMEOUT_MS = 5_000
 const SPAWN_TIMEOUT_MS = 15_000
@@ -263,6 +275,16 @@ export async function sendPromptIfIdle(
       const afterTurn = terminal?.turn ?? turn
       const started = status === "working" || (afterTurn !== null && turn !== null && afterTurn > turn)
       if (!started) {
+        // Diagnose the common cause instead of a bare "did not start": an
+        // OpenCode session pinned to a model that no longer exists shows it in
+        // the footer ("<model> (unavailable)") and never starts a turn.
+        const screen = await readTerminal(address, 40, timeoutMs).catch(() => null)
+        if (screen && /\(unavailable\)|model unavailable/i.test(screen)) {
+          throw new HerdrModelUnavailableError(
+            `agent ${address} cannot start a turn: its session model is unavailable. ` +
+              `Set "model" in the role's opencode.jsonc (or .agents/bot/kbots.json) and restart the agent with --fresh.`,
+          )
+        }
         throw new HerdrBusyError(`agent ${address} accepted the text but did not start a turn (input pending)`)
       }
       turn = afterTurn

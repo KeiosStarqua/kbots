@@ -45,6 +45,7 @@ import { RpcError, invalidParams } from "../errors.ts"
 import {
   HerdrBusyError,
   HerdrError,
+  HerdrModelUnavailableError,
   getTerminal,
   readTerminal,
   interruptTerminal,
@@ -474,6 +475,11 @@ export async function promptAgentCore(agent: AgentRow, text: string): Promise<Re
       addEvent("bot.prompted", `Agent ${agent.id} prompted (${text.length} chars)`, { agentId: agent.id, textLength: text.length })
       return { botId: agent.id, mode: agent.mode, accepted: true, turn: result.turn }
     } catch (error) {
+      if (error instanceof HerdrModelUnavailableError) {
+        // A model that no longer exists is a config fix, not a busy agent: pass
+        // the diagnostic (and the fix it names) through instead of "busy".
+        throw new RpcError(-32602, error.message)
+      }
       if (error instanceof HerdrBusyError) {
         throw new RpcError(-32602, `agent ${agent.id} is busy or blocked; prompt refused (no force)`)
       }
