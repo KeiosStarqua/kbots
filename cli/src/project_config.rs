@@ -11,10 +11,16 @@ const ROLES: [&str; 3] = ["ceo", "git", "ops"];
 /// OpenCode roles, but not an OpenCode role: no manifest entry, no config.
 const SEEDED_ROLES: [&str; 4] = ["ceo", "git", "ops", "router"];
 const CONFIG_FILE: &str = "kbots.json";
+/// Local, machine-scoped record of what the installed CLI scaffolded in this
+/// repo: the kbots version, a hash of the embedded template set, and the
+/// hashes of the files it wrote. Lets `project sync` upgrade untouched files
+/// after a kbots upgrade while never overwriting customized ones.
+const SCAFFOLD_STAMP: &str = ".scaffold.json";
 const OPENCODE_SCHEMA: &str = "https://opencode.ai/config.json";
 
 pub fn ensure_project_bot_scaffold(project_root: &Path) -> Result<(), Box<dyn Error>> {
     ensure_role_folders_and_instructions(project_root)?;
+    stamp_if_missing(project_root)?;
     let manifest_path = manifest_path(project_root);
 
     if !manifest_path.exists() {
@@ -53,6 +59,7 @@ pub fn configure_project(
     }
 
     ensure_role_folders_and_instructions(&project_root)?;
+    stamp_if_missing(&project_root)?;
     let manifest_path = manifest_path(&project_root);
     if !manifest_path.exists() {
         if ROLES.iter().any(|role| {
@@ -93,6 +100,7 @@ pub fn configure_project(
 pub fn sync_project(
     requested_path: Option<PathBuf>,
     force: bool,
+    check_only: bool,
 ) -> Result<Value, Box<dyn Error>> {
     let requested_path = requested_path.unwrap_or(std::env::current_dir()?);
     let project_root = fs::canonicalize(&requested_path)?;
@@ -104,35 +112,91 @@ pub fn sync_project(
         .into());
     }
 
+    let stamp = read_stamp(&project_root);
+    let recorded_files = stamp
+        .as_ref()
+        .and_then(|stamp| stamp.get("files"))
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let recorded_version = stamp
+        .as_ref()
+        .and_then(|stamp| stamp.get("kbotsVersion"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let templates_hash = templates_hash();
+
     let mut created: Vec<String> = Vec::new();
     let mut updated: Vec<String> = Vec::new();
     let mut current: Vec<String> = Vec::new();
     let mut kept: Vec<String> = Vec::new();
+    let mut stale: Vec<String> = Vec::new();
     let mut backups: Vec<String> = Vec::new();
+    // Only files whose bytes we actually wrote (or that already match the
+    // current template) get recorded; a customized file keeps no hash so a
+    // later sync still treats it as user-owned.
+    let mut files = Map::new();
+
     for role in SEEDED_ROLES {
         let role_dir = project_root.join(bot_dir(role));
-        fs::create_dir_all(&role_dir)?;
+        if !check_only {
+            fs::create_dir_all(&role_dir)?;
+        }
         let agents_path = role_dir.join("AGENTS.md");
         let template = default_agents(role);
         if !agents_path.exists() {
+            if check_only {
+                stale.push(role.to_owned());
+                continue;
+            }
             fs::write(&agents_path, template)?;
             created.push(role.to_owned());
+            files.insert(role.to_owned(), json!(content_hash(template)));
             continue;
         }
         let existing = fs::read_to_string(&agents_path)?;
         if existing == template {
             current.push(role.to_owned());
+            files.insert(role.to_owned(), json!(content_hash(template)));
             continue;
         }
-        if force {
-            let backup = backup_agents_md(&role_dir)?;
+        let untouched_since_sync = recorded_files
+            .get(role)
+            .and_then(Value::as_str)
+            .is_some_and(|recorded| recorded == content_hash(&existing));
+        if untouched_since_sync || force {
+            if check_only {
+                stale.push(role.to_owned());
+                continue;
+            }
+            if force {
+                let backup = backup_agents_md(&role_dir)?;
+                backups.push(format!("{role}: {}", backup.display()));
+            }
             fs::write(&agents_path, template)?;
             updated.push(role.to_owned());
-            backups.push(format!("{role}: {}", backup.display()));
+            files.insert(role.to_owned(), json!(content_hash(template)));
         } else {
             kept.push(role.to_owned());
         }
     }
+
+    let up_to_date = stale.is_empty() && updated.is_empty();
+    if check_only {
+        return Ok(json!({
+            "projectPath": project_root,
+            "check": true,
+            "upToDate": up_to_date,
+            "stale": stale,
+            "customized": kept,
+            "current": current,
+            "kbotsVersion": kbots_version(),
+            "templatesHash": templates_hash,
+            "recordedVersion": recorded_version,
+        }));
+    }
+
+    let stamp_file = write_stamp(&project_root, &templates_hash, &files)?;
     Ok(json!({
         "projectPath": project_root,
         "force": force,
@@ -141,6 +205,10 @@ pub fn sync_project(
         "current": current,
         "kept": kept,
         "backups": backups,
+        "kbotsVersion": kbots_version(),
+        "templatesHash": templates_hash,
+        "previousVersion": recorded_version,
+        "stamp": stamp_file.display().to_string(),
     }))
 }
 
@@ -170,6 +238,125 @@ fn ensure_role_folders_and_instructions(project_root: &Path) -> Result<(), Box<d
         }
     }
     Ok(())
+}
+
+/// Decorate a `projects.list` response with per-repo scaffold state so the
+/// operator can see which repos still carry an older plant.
+pub fn enrich_projects_list(response: &mut Value) {
+    let current_hash = templates_hash();
+    let Some(items) = response.get_mut("items").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for item in items {
+        let Some(path) = item.get("path").and_then(Value::as_str).map(str::to_owned) else {
+            continue;
+        };
+        let Some(object) = item.as_object_mut() else { continue };
+        match read_stamp(Path::new(&path)) {
+            Some(stamp) => {
+                let version = stamp
+                    .get("kbotsVersion")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_owned();
+                let outdated =
+                    stamp.get("templatesHash").and_then(Value::as_str) != Some(current_hash.as_str());
+                object.insert("scaffoldVersion".to_owned(), json!(version));
+                object.insert("scaffoldOutdated".to_owned(), json!(outdated));
+            }
+            None => {
+                object.insert("scaffoldVersion".to_owned(), Value::Null);
+                object.insert("scaffoldOutdated".to_owned(), json!(true));
+            }
+        }
+    }
+}
+
+fn kbots_version() -> &'static str {
+    option_env!("KBOTS_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+fn content_hash(text: &str) -> String {
+    format!("{:016x}", fnv1a64(text.as_bytes()))
+}
+
+fn templates_hash() -> String {
+    let mut acc = String::new();
+    for role in SEEDED_ROLES {
+        acc.push_str(role);
+        acc.push('\0');
+        acc.push_str(default_agents(role));
+        acc.push('\0');
+    }
+    content_hash(&acc)
+}
+
+fn stamp_path(project_root: &Path) -> PathBuf {
+    project_root.join(".agents").join("bot").join(SCAFFOLD_STAMP)
+}
+
+fn read_stamp(project_root: &Path) -> Option<Value> {
+    let text = fs::read_to_string(stamp_path(project_root)).ok()?;
+    serde_json::from_str::<Value>(&text).ok()
+}
+
+fn write_stamp(
+    project_root: &Path,
+    templates_hash: &str,
+    files: &Map<String, Value>,
+) -> Result<PathBuf, Box<dyn Error>> {
+    let path = stamp_path(project_root);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let value = json!({
+        "kbotsVersion": kbots_version(),
+        "templatesHash": templates_hash,
+        "files": files,
+        "updatedAt": now_iso(),
+    });
+    fs::write(&path, format!("{}\n", serde_json::to_string_pretty(&value)?))?;
+    Ok(path)
+}
+
+/// First-run baseline: when no stamp exists yet, record the hashes of files
+/// that are byte-identical to the current templates, so later upgrades can
+/// update them. Customized files stay unrecorded (user-owned).
+fn stamp_if_missing(project_root: &Path) -> Result<(), Box<dyn Error>> {
+    if read_stamp(project_root).is_some() {
+        return Ok(());
+    }
+    let mut files = Map::new();
+    for role in SEEDED_ROLES {
+        let path = project_root.join(bot_dir(role)).join("AGENTS.md");
+        let Ok(existing) = fs::read_to_string(&path) else {
+            continue;
+        };
+        if existing == default_agents(role) {
+            files.insert(role.to_owned(), json!(content_hash(&existing)));
+        }
+    }
+    write_stamp(project_root, &templates_hash(), &files)?;
+    Ok(())
+}
+
+/// JSON-safe timestamp without extra crates.
+fn now_iso() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("@{secs}")
 }
 
 fn bot_dir(role: &str) -> PathBuf {

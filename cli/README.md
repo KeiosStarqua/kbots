@@ -41,7 +41,8 @@ kbots project add /path/to/project
 kbots project add --name "My Project"   # current directory
 kbots project configure /path/to/project
 kbots project configure --overwrite      # regenerate current project's OpenCode configs
-kbots project sync                        # refresh starter AGENTS.md from embedded templates
+kbots project sync                        # upgrade starter AGENTS.md from the embedded templates
+kbots project sync --check                # report stale/customized files; write nothing
 kbots project sync --force                # also replace customs (backs them up first)
 kbots sessions start --directory /path/to/project
 kbots project list
@@ -166,6 +167,34 @@ files identical to the template are left alone; customized files are kept unless
 `--force` is passed, in which case each is backed up next to the original as
 `AGENTS.md.bak` (then `AGENTS.md.bak.N`) before the template is written. The
 project manifest and OpenCode configs are not touched.
+
+### Per-repo scaffolding version
+
+kbots is installed once per machine (the CLI, the clients, and one daemon);
+each registered repo carries its own copy of the scaffolding. To keep those
+copies manageable across kbots upgrades, seeding writes a local stamp at
+`.agents/bot/.scaffold.json`:
+
+```json
+{ "kbotsVersion": "2026.11.20.8", "templatesHash": "…", "files": { "git": "…" } }
+```
+
+- `kbotsVersion` is the release that last wrote the scaffolding (the deploy
+  version embedded by `./install.sh`; `0.1.0` for a dev build).
+- `files` records the content hash of every file kbots wrote. After a kbots
+  upgrade, `kbots project sync` **upgrades files whose bytes are unchanged
+  since the recorded sync**, keeps customized files, and reports `previous`
+  → new version. Only `--force` overwrites a customized file (with a backup).
+- `kbots project sync --check` reports `stale` (upgradeable) and `customized`
+  files without writing; `kbots prj ls` shows each repo's scaffold version
+  and a `(stale)` marker when the template set changed.
+- A repo scaffolded before this stamp existed has no recorded hashes, so it
+  is treated as customized: migrate it once with
+  `kbots project sync --force` (backups are kept), after which upgrades are
+  automatic for untouched files.
+- Nothing updates repo files by itself when the global kbots is upgraded —
+  run `kbots project sync` once after installing a new version
+  (`kbots prj ls` tells you which repos need it).
 
 `kbots sessions start` creates one idle OpenCode session for every enabled bot
 in the manifest, using each role's `.agents/bot/<role>` directory so its

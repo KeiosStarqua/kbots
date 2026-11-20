@@ -253,6 +253,9 @@ enum ProjectCommands {
         /// Replace customized AGENTS.md files too; each is backed up first (AGENTS.md.bak[.N]).
         #[arg(long)]
         force: bool,
+        /// Report whether the repo is up to date; write nothing.
+        #[arg(long)]
+        check: bool,
     },
 }
 
@@ -275,9 +278,9 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             Ok(())
         }
         Commands::Project {
-            command: ProjectCommands::Sync { path, force },
+            command: ProjectCommands::Sync { path, force, check },
         } => {
-            let result = project_config::sync_project(path, force)?;
+            let result = project_config::sync_project(path, force, check)?;
             emit("internal.project.sync", &result, cli.json);
             Ok(())
         }
@@ -287,7 +290,10 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
         command => {
             let (method, params) = rpc_call(command)?;
             let candidates = socket_candidates(cli.socket);
-            let response = request_with_fallback(&candidates, method, params)?;
+            let mut response = request_with_fallback(&candidates, method, params)?;
+            if method == "projects.list" {
+                project_config::enrich_projects_list(&mut response);
+            }
             emit(method, &response, cli.json);
             Ok(())
         }

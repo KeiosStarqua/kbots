@@ -498,14 +498,31 @@ fn render_projects_list(value: &Value) -> String {
     let rows: Vec<Vec<String>> = items
         .iter()
         .map(|project| {
+            let version = project
+                .get("scaffoldVersion")
+                .and_then(Value::as_str)
+                .unwrap_or("—")
+                .to_owned();
+            let outdated = project
+                .get("scaffoldOutdated")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let scaffold = if version == "—" {
+                "— (not synced)".to_owned()
+            } else if outdated {
+                format!("{version} (stale)")
+            } else {
+                version
+            };
             vec![
                 string(project, "projectId").unwrap_or_else(|| "?".to_owned()),
                 string(project, "name").unwrap_or_default(),
+                scaffold,
                 string(project, "path").unwrap_or_default(),
             ]
         })
         .collect();
-    table(&["ID", "NAME", "PATH"], &rows)
+    table(&["ID", "NAME", "SCAFFOLD", "PATH"], &rows)
 }
 
 fn render_project_get(value: &Value) -> String {
@@ -961,12 +978,42 @@ fn render_project_sync(value: &Value) -> String {
             })
             .unwrap_or_else(|| "-".to_owned())
     };
+    if value.get("check").and_then(Value::as_bool).unwrap_or(false) {
+        let up_to_date = value.get("upToDate").and_then(Value::as_bool).unwrap_or(false);
+        return detail(&[
+            ("version", string(value, "kbotsVersion").unwrap_or_else(|| "?".to_owned())),
+            (
+                "recorded",
+                string(value, "recordedVersion").unwrap_or_else(|| "never synced".to_owned()),
+            ),
+            ("state", if up_to_date { "up to date".to_owned() } else { "needs sync".to_owned() }),
+            ("stale", format_list("stale")),
+            ("customized", format_list("customized")),
+        ]);
+    }
+    let format_list_original = |key: &str| {
+        value
+            .get(key)
+            .and_then(Value::as_array)
+            .map(|entries| {
+                let items: Vec<&str> = entries.iter().filter_map(Value::as_str).collect();
+                if items.is_empty() {
+                    "-".to_owned()
+                } else {
+                    items.join(", ")
+                }
+            })
+            .unwrap_or_else(|| "-".to_owned())
+    };
     detail(&[
-        ("created", format_list("created")),
-        ("updated", format_list("updated")),
-        ("current", format_list("current")),
-        ("kept", format_list("kept")),
-        ("backups", format_list("backups")),
+        ("version", string(value, "kbotsVersion").unwrap_or_else(|| "?".to_owned())),
+        ("previous", string(value, "previousVersion").unwrap_or_else(|| "-".to_owned())),
+        ("created", format_list_original("created")),
+        ("updated", format_list_original("updated")),
+        ("current", format_list_original("current")),
+        ("kept", format_list_original("kept")),
+        ("backups", format_list_original("backups")),
+        ("stamp", string(value, "stamp").unwrap_or_else(|| "-".to_owned())),
     ])
 }
 
