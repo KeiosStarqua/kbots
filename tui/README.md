@@ -32,9 +32,12 @@ embedded template automatically (identical to `kb project sync`; never
 overwrites existing files); if scaffolding fails, the terminal falls back to
 the project root. Every key
 except the host chord `Ctrl+]` goes to Codex; `Ctrl+]` returns to Overview.
-The terminal is bound to "free" or to an open task: `Ctrl+←`/`Ctrl+→` cycle
-the binding, one pty per bound task is kept alive in memory (switching back
-loses no context), and the bound task's `TASK-id`/title is the spawn context.
+The terminal is bound to "free" or to one open task: `Ctrl+←`/`Ctrl+→` cycle
+the binding, and the bound task's `TASK-id`/title is the spawn context. The
+pane is the project's one router bot, so it owns exactly one Codex process:
+the binding is stored as a `TASK-id` (list churn never re-points it), and
+switching the binding closes the previous Codex and respawns with the new
+context — ptys are never accumulated per task.
 The mouse wheel (or `Ctrl+Shift+↑`/`Ctrl+Shift+↓`) scrolls the 1000-line
 scrollback; `Ctrl+R` respawns a dead Codex. A green `✕ exit codex` button at
 the top-right border of the Codex pane leaves the page with one click

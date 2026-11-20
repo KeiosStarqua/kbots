@@ -213,9 +213,10 @@ struct App {
     overlay: Option<Overlay>,
     overlay_scroll: usize,
     codex_terms: CodexTerminals,
-    /// Binding for the embedded Codex terminal: None = free session, Some(i)
-    /// = bound to the i-th open task in list order.
-    codex_binding: Option<usize>,
+    /// Binding for the embedded Codex terminal: None = free session, Some(id)
+    /// = bound to that open task. Stored as a task id, not a list index, so
+    /// task churn never re-points the terminal at another task.
+    codex_binding: Option<String>,
     codex_spawn_error: Option<String>,
     /// Keys of terminals whose process has exited (screen stays visible).
     codex_exited: Vec<String>,
@@ -647,8 +648,10 @@ impl App {
     }
 
     fn codex_binding_info(&self) -> Option<(String, String, String)> {
-        let index = self.codex_binding?;
-        self.open_tasks().get(index).cloned()
+        let task_id = self.codex_binding.as_ref()?;
+        self.open_tasks()
+            .into_iter()
+            .find(|(id, _, _)| id == task_id)
     }
 
     fn codex_binding_key(&self) -> String {
@@ -665,10 +668,26 @@ impl App {
     }
 
     fn cycle_codex_binding(&mut self, offset: isize) {
-        let count = self.open_tasks().len() as isize;
-        let current = self.codex_binding.map(|i| i as isize + 1).unwrap_or(0);
-        let next = (current + offset).rem_euclid(count + 1);
-        self.codex_binding = if next == 0 { None } else { Some((next - 1) as usize) };
+        let ids: Vec<String> = self
+            .open_tasks()
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
+        let current = match &self.codex_binding {
+            None => 0,
+            Some(bound) => ids
+                .iter()
+                .position(|id| id == bound)
+                .map(|index| index + 1)
+                .unwrap_or(0),
+        };
+        let count = ids.len() as isize;
+        let next = (current as isize + offset).rem_euclid(count + 1);
+        self.codex_binding = if next == 0 {
+            None
+        } else {
+            ids.get((next - 1) as usize).cloned()
+        };
     }
 
     /// Walk from `start` up to (and including) the enclosing git root and
@@ -766,6 +785,14 @@ impl App {
             return;
         }
         let key = self.codex_binding_key();
+        // The pane is one router bot: switching the binding closes the
+        // previous Codex process instead of leaving a pty behind per task.
+        for other in self.codex_terms.order.clone() {
+            if other != key {
+                self.codex_terms.remove(&other);
+                self.codex_exited.retain(|k| k != &other);
+            }
+        }
         if let Some(term) = self.codex_terms.get_mut(&key)
             && term.has_exited()
             && !self.codex_exited.iter().any(|k| k == &key)
@@ -2602,9 +2629,6 @@ fn render_codex_section(frame: &mut Frame, area: Rect, app: &App) {
     let key = app.codex_binding_key();
     let exited = app.codex_exited.iter().any(|entry| entry == &key);
     let mut title = format!(" Codex · {}", app.codex_binding_label());
-    if app.codex_terms.order.len() > 1 {
-        title.push_str(&format!(" · {} live", app.codex_terms.order.len()));
-    }
     if exited {
         title.push_str(" · exited");
     }
