@@ -107,6 +107,7 @@ When the user requests a durable behavior change, record it here or in the relev
 ### Work Guidance
 
 - Keep session inspection read-only and scope existing-session actions to the selected directory.
+- Fixes belong in kbots code, not in project repos. When a project's scaffolding, manifest, config, or daemon/CLI behavior is wrong, change the kbots code (CLI, daemon, templates) with a verification and let the fixed code resolve it — do not hand-edit downstream repos, and do not present "run this manually in each project" as the fix. Operate on projects only through kbots commands (`kb project add|configure|sync`, `kb sessions start`, `kb agents …`), and keep the resolution idempotent so every registered project converges by re-running the command.
 - Keep operational and API details in `docs/opencode-control.md`.
 - Keep the GUI/TUI/CLI daemon transport contract in `docs/kbots-ipc.md`.
 - After completing and verifying a requested code change, stage only that task's files, create one focused atomic commit, and push it to the current branch's configured upstream without asking for confirmation. Never include unrelated pre-existing changes in the commit.
