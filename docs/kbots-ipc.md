@@ -196,6 +196,36 @@ CEO session goes idle without marking its task done. Semantics:
 - Nudges are not user messages and do not enter `tasks.brief`/`tasks.inbox`.
   They are operational events, visible in `events.list` as `task.nudged`.
 
+## Maintenance loop (reconcile + reaper) — v7
+
+The daemon runs one more timer besides the watcher and the nudger: a
+maintenance tick, default every 60 s (`KBOTS_REAP_INTERVAL_MS`, minimum 10 s).
+It does two things, in order:
+
+1. `reconcileAgents()` — the same probe every `agents.*` mutation runs, now
+   also on a timer, so a terminal that exits between RPCs is noticed instead
+   of waiting for the next client call.
+2. The reaper — stops a CEO terminal whose task already reached a terminal
+   status (`done`, `failed`, `canceled`) and has been quiet for the grace
+   period (`KBOTS_REAP_GRACE_MS`, default 10 min, measured from the task's
+   `updated_at`).
+
+Rules:
+
+- Only `role = ceo`, `mode = terminal`, `status = running` agents with a
+  `task_agents` link are reaped. git/ops bots are long-lived per project;
+  agents without a task link are not attributable and are never touched.
+- Stopping uses the `agents.stop` path (`stopAgentCore`): the terminal is
+  killed and the row moves to `stopped`. **The OpenCode session is kept**,
+  together with its history — same contract as a manual stop. Nothing is
+  deleted.
+- A failed kill marks the row `error` and logs `agent.reap_failed`; the loop
+  continues with the other agents and retries on the next tick.
+- `agent.reaped` is logged with `data: {agentId, sessionId, taskId, reason}`.
+- `KBOTS_REAP=off` skips the reaper step only; the reconcile tick keeps
+  running.
+- Overlapping ticks are skipped, so a slow reconcile cannot pile up.
+
 ## v2 methods (task-centric dispatch)
 
 Implemented alongside the Mission Control work; see

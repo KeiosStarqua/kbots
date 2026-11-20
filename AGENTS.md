@@ -102,6 +102,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - Session commands default to the current directory; pass `--directory` to select another project.
 - Prompting and interrupting sessions are explicit actions. Do not delete sessions.
 - Interrupting a session does not stop a recurring schedule attached to it.
+- The daemon maintenance loop (60 s) reconciles agents and stops CEO terminals whose task already reached `done`/`failed`/`canceled` after a grace period. That stop is the `agents stop` path — the session is kept. `KBOTS_REAP=off` disables the reaper step.
 
 ### Work Guidance
 

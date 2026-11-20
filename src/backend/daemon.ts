@@ -55,6 +55,7 @@ import {
   watchersSetHandler,
 } from "./orchestrator/watchers.ts"
 import { startNudgeLoop } from "./orchestrator/nudger.ts"
+import { startMaintenanceLoop } from "./orchestrator/maintenance.ts"
 
 const MAX_REQUEST_BYTES = 1024 * 1024
 const SOCKET_TIMEOUT_MS = 10_000
@@ -275,6 +276,8 @@ async function main(): Promise<void> {
   let secondaryServer: Server | null = null
   const shutdown = () => {
     stopWatcher()
+    stopNudge()
+    stopMaintenance()
     secondaryServer?.close()
     server.close(() => {
       const removals = [unlink(path).catch(() => {})]
@@ -296,6 +299,9 @@ async function main(): Promise<void> {
   console.error(`${DAEMON_NAME}: listening on ${path}`)
   const stopWatcher = startWatcherLoop()
   const stopNudge = startNudgeLoop()
+  // Periodic reconcile + reap of finished CEO terminals (KBOTS_REAP=off,
+  // KBOTS_REAP_INTERVAL_MS, KBOTS_REAP_GRACE_MS). Sessions are never deleted.
+  const stopMaintenance = startMaintenanceLoop()
   void reconcileAgents()
     .then(({ checked, changed }) => {
       if (checked > 0) console.error(`${DAEMON_NAME}: reconciled ${checked} live agent(s), ${changed} changed`)

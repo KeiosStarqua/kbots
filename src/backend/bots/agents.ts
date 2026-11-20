@@ -302,34 +302,52 @@ export async function agentsStartHandler(params: Record<string, unknown>): Promi
   }
 }
 
-export async function agentsStopHandler(params: Record<string, unknown>): Promise<Record<string, unknown>> {
-  await reconcileAgents()
-  let agent = mustGetAgent(params)
-  if (agent.status === "stopped") {
-    return managedPayload(agent, null, undefined)
-  }
-  agent = updateAgent(agent.id, { status: "stopping" })!
-  if (agent.mode === "terminal" && agent.hcAddress) {
+/**
+ * Stop one managed agent: kill its terminal (when it has one), mark the row
+ * stopped, and log the event. The OpenCode session is never deleted — a
+ * stopped agent can be restarted against the same session.
+ *
+ * Shared by `agents.stop` and the daemon maintenance reaper. When the
+ * terminal kill fails the row is marked `error` and the failure is rethrown.
+ */
+export async function stopAgentCore(agent: AgentRow): Promise<AgentRow> {
+  if (agent.status === "stopped") return agent
+  let current = updateAgent(agent.id, { status: "stopping" })!
+  if (current.mode === "terminal" && current.hcAddress) {
     try {
-      await killTerminal(agent.hcAddress)
+      await killTerminal(current.hcAddress)
     } catch (error) {
-      if (error instanceof HerdrError && error.code === 3) {
-        // already gone — fall through and mark stopped
-      } else {
+      if (!(error instanceof HerdrError && error.code === 3)) {
+        // code 3 = already gone — fall through and mark stopped
         const message = error instanceof Error ? error.message : String(error)
-        updateAgent(agent.id, { status: "error", lastError: message })
-        addEvent("bot.stop_failed", `Agent ${agent.id} stop failed: ${message}`, { agentId: agent.id, message })
-        throw new RpcError(-32603, `agent stop failed: ${message}`)
+        updateAgent(current.id, { status: "error", lastError: message })
+        addEvent("bot.stop_failed", `Agent ${current.id} stop failed: ${message}`, { agentId: current.id, message })
+        throw error instanceof Error ? error : new Error(message)
       }
     }
   }
-  agent = updateAgent(agent.id, { status: "stopped", stoppedAt: new Date().toISOString(), lastError: null })!
-  addEvent("bot.stopped", `Agent ${agent.id} ${agent.role} stopped`, {
-    agentId: agent.id,
-    mode: agent.mode,
-    sessionId: agent.sessionId,
+  current = updateAgent(current.id, { status: "stopped", stoppedAt: new Date().toISOString(), lastError: null })!
+  addEvent("bot.stopped", `Agent ${current.id} ${current.role} stopped`, {
+    agentId: current.id,
+    mode: current.mode,
+    sessionId: current.sessionId,
   })
-  return managedPayload(agent, null)
+  return current
+}
+
+export async function agentsStopHandler(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+  await reconcileAgents()
+  const agent = mustGetAgent(params)
+  if (agent.status === "stopped") {
+    return managedPayload(agent, null, undefined)
+  }
+  try {
+    const stopped = await stopAgentCore(agent)
+    return managedPayload(stopped, null)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new RpcError(-32603, `agent stop failed: ${message}`)
+  }
 }
 
 export async function agentsInterruptHandler(params: Record<string, unknown>): Promise<Record<string, unknown>> {
