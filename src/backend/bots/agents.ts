@@ -57,7 +57,7 @@ import {
   type HerdrFullTerminal,
 } from "../adapters/herdr.ts"
 import {
-  availableModelKeys,
+  availableModels,
   makeOpencodeClient,
   pickFallbackModel,
   sessionModelRef,
@@ -95,19 +95,19 @@ async function ensureAgentModel(
     modelStateByAgent.set(agent.id, { at: Date.now(), model: null, available: null, switchedTo: null })
     return
   }
-  const keys = await availableModelKeys(agent.directory)
-  if (!keys) {
+  const models = await availableModels(agent.directory)
+  if (!models) {
     // The model list itself is unreadable — say nothing, try again later.
     modelStateByAgent.set(agent.id, { at: Date.now(), model, available: null, switchedTo: null })
     return
   }
   const key = `${model.providerID}/${model.id}`
-  if (keys.has(key)) {
+  if (models.keys.has(key)) {
     modelStateByAgent.set(agent.id, { at: Date.now(), model, available: true, switchedTo: null })
     return
   }
   const idle = live.status === "idle" && live.state === "live"
-  const fallback = pickFallbackModel(keys, model)
+  const fallback = pickFallbackModel(models, model)
   if (idle && fallback && agent.status === "running") {
     if (await switchSessionModel(agent.sessionId, fallback)) {
       modelStateByAgent.set(agent.id, { at: Date.now(), model: fallback, available: true, switchedTo: fallback })

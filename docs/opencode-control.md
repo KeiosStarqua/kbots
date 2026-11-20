@@ -120,9 +120,10 @@ The daemon keeps the sessions usable from `reconcileAgents` (once per agent per
 - When the pinned model is gone it logs `agent.model_unavailable` once. If the
   terminal is idle and the agent is running, it switches the session to
   `KBOTS_MODEL_FALLBACK` (comma-separated `provider/model`, first entry that is
-  active) — otherwise to another active model from the same provider, otherwise
-  the first active model — and logs `agent.model_switched`. It never switches
-  mid-turn; a busy terminal is retried on a later pass.
+  active) — otherwise to another active model, free before paid (decided by the
+  list's cost tiers, not by the model name), same provider before others — and
+  logs `agent.model_switched`. It never switches mid-turn; a busy terminal is
+  retried on a later pass.
 - `agents.show`, `agents.list`, `system.status`, and the CLI/TUI bot report carry
   the effective `model` and `modelAvailable`; an idle bot whose model is
   unavailable reports health code `model_unavailable`. A blocked or working

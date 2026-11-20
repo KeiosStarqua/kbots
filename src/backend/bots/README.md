@@ -13,5 +13,5 @@ Modules:
   TUI. Pure and self-checked by `health.selfcheck.ts`
   (`bun run src/backend/bots/health.selfcheck.ts`).
 - `opencode.ts` — OpenCode client factory, and session model health
-  (`availableModelKeys`, `sessionModelRef`, `pickFallbackModel`,
+  (`availableModels`, `sessionModelRef`, `pickFallbackModel`,
   `switchSessionModel`). See `docs/opencode-control.md`.
