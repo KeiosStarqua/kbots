@@ -24,17 +24,20 @@ pub fn ensure_project_bot_scaffold(project_root: &Path) -> Result<(), Box<dyn Er
     let manifest_path = manifest_path(project_root);
 
     if !manifest_path.exists() {
-        // Existing OpenCode configs are project-owned. Don't invent a manifest
-        // that could silently disagree with them; migrate them explicitly.
+        // Existing OpenCode configs are project-owned: adopt them into a
+        // manifest instead of inventing defaults that would disagree, and
+        // never rewrite the configs themselves (render_configs preserves).
         if ROLES.iter().any(|role| {
             project_root
                 .join(bot_dir(role))
                 .join("opencode.jsonc")
                 .exists()
         }) {
-            return Ok(());
+            let config = manifest_from_existing_configs(project_root)?;
+            write_manifest_value(project_root, &config)?;
+        } else {
+            write_manifest(project_root)?;
         }
-        write_manifest(project_root)?;
     }
 
     render_configs(project_root, false)?;
@@ -68,17 +71,11 @@ pub fn configure_project(
                 .join("opencode.jsonc")
                 .exists()
         }) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "{} already has opencode.jsonc files; create {} from their settings before generating configs",
-                    project_root.display(),
-                    manifest_path.display()
-                ),
-            )
-            .into());
+            let config = manifest_from_existing_configs(&project_root)?;
+            write_manifest_value(&project_root, &config)?;
+        } else {
+            write_manifest(&project_root)?;
         }
-        write_manifest(&project_root)?;
     }
 
     let (written, preserved, disabled) = render_configs(&project_root, overwrite)?;
@@ -107,7 +104,10 @@ pub fn sync_project(
     if !project_root.is_dir() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("project path is not a directory: {}", project_root.display()),
+            format!(
+                "project path is not a directory: {}",
+                project_root.display()
+            ),
         )
         .into());
     }
@@ -212,6 +212,42 @@ pub fn sync_project(
     }))
 }
 
+/// The scaffold stamp is machine-local state (like the session registry), so
+/// keep it out of the project's git. Appends the ignore entry once.
+fn ensure_stamp_ignored(project_root: &Path) -> Result<(), Box<dyn Error>> {
+    let dir = project_root.join(".agents").join("bot");
+    fs::create_dir_all(&dir)?;
+    let path = dir.join(".gitignore");
+    let existing = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error.into()),
+    };
+    let sibling_entry = format!("/{SCAFFOLD_STAMP}");
+    let already_listed = existing.lines().any(|line| {
+        let line = line.trim();
+        !line.is_empty()
+            && !line.starts_with('#')
+            && (line == SCAFFOLD_STAMP
+                || line == sibling_entry
+                || line.ends_with(&format!("/{SCAFFOLD_STAMP}")))
+    });
+    if already_listed {
+        return Ok(());
+    }
+    let mut text = existing;
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    if text.is_empty() {
+        text.push_str("# kbots scaffold state — machine-local, never committed.\n");
+    }
+    text.push_str(SCAFFOLD_STAMP);
+    text.push('\n');
+    fs::write(&path, text)?;
+    Ok(())
+}
+
 fn backup_agents_md(role_dir: &Path) -> Result<PathBuf, Box<dyn Error>> {
     let source = role_dir.join("AGENTS.md");
     for index in 0..1000u32 {
@@ -251,7 +287,9 @@ pub fn enrich_projects_list(response: &mut Value) {
         let Some(path) = item.get("path").and_then(Value::as_str).map(str::to_owned) else {
             continue;
         };
-        let Some(object) = item.as_object_mut() else { continue };
+        let Some(object) = item.as_object_mut() else {
+            continue;
+        };
         match read_stamp(Path::new(&path)) {
             Some(stamp) => {
                 let version = stamp
@@ -259,8 +297,8 @@ pub fn enrich_projects_list(response: &mut Value) {
                     .and_then(Value::as_str)
                     .unwrap_or("unknown")
                     .to_owned();
-                let outdated =
-                    stamp.get("templatesHash").and_then(Value::as_str) != Some(current_hash.as_str());
+                let outdated = stamp.get("templatesHash").and_then(Value::as_str)
+                    != Some(current_hash.as_str());
                 object.insert("scaffoldVersion".to_owned(), json!(version));
                 object.insert("scaffoldOutdated".to_owned(), json!(outdated));
             }
@@ -301,7 +339,10 @@ fn templates_hash() -> String {
 }
 
 fn stamp_path(project_root: &Path) -> PathBuf {
-    project_root.join(".agents").join("bot").join(SCAFFOLD_STAMP)
+    project_root
+        .join(".agents")
+        .join("bot")
+        .join(SCAFFOLD_STAMP)
 }
 
 fn read_stamp(project_root: &Path) -> Option<Value> {
@@ -314,6 +355,7 @@ fn write_stamp(
     templates_hash: &str,
     files: &Map<String, Value>,
 ) -> Result<PathBuf, Box<dyn Error>> {
+    ensure_stamp_ignored(project_root)?;
     let path = stamp_path(project_root);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -324,7 +366,10 @@ fn write_stamp(
         "files": files,
         "updatedAt": now_iso(),
     });
-    fs::write(&path, format!("{}\n", serde_json::to_string_pretty(&value)?))?;
+    fs::write(
+        &path,
+        format!("{}\n", serde_json::to_string_pretty(&value)?),
+    )?;
     Ok(path)
 }
 
@@ -382,9 +427,56 @@ fn write_manifest(project_root: &Path) -> Result<(), Box<dyn Error>> {
         );
     }
     let config = json!({ "version": 1, "bots": bots });
-    let text = serde_json::to_string_pretty(&config)? + "\n";
+    write_manifest_value(project_root, &config)
+}
+
+fn write_manifest_value(project_root: &Path, config: &Value) -> Result<(), Box<dyn Error>> {
+    let text = serde_json::to_string_pretty(config)? + "\n";
     fs::write(manifest_path(project_root), text)?;
     Ok(())
+}
+
+/// Adopt a project scaffolded by hand or by an older tool: derive a version-1
+/// manifest from the per-role `opencode.jsonc` files it already ships, so the
+/// project reports no `manifestError` and `sessions start` can run. Roles
+/// without a config get the starter defaults. Existing configs stay untouched
+/// (`render_configs` preserves them unless `--overwrite` is explicit).
+fn manifest_from_existing_configs(project_root: &Path) -> Result<Value, Box<dyn Error>> {
+    let mut bots = Map::new();
+    for role in ROLES {
+        let config_path = project_root.join(bot_dir(role)).join("opencode.jsonc");
+        let opencode = match fs::read_to_string(&config_path) {
+            Ok(text) => {
+                let parsed: Value = serde_json::from_str(&strip_jsonc(&text)).map_err(|error| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("cannot read {} as JSONC: {error}", config_path.display()),
+                    )
+                })?;
+                let mut object = parsed.as_object().cloned().ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("{} must contain a JSON object", config_path.display()),
+                    )
+                })?;
+                // The manifest feeds `render_configs`, which writes its own
+                // `$schema`; a project-specific schema URL would be dropped
+                // there, so don't carry it into the manifest either.
+                object.remove("$schema");
+                Value::Object(object)
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => json!({
+                "instructions": [format!(".agents/bot/{role}/AGENTS.md")],
+                "plugins": [],
+            }),
+            Err(error) => return Err(error.into()),
+        };
+        bots.insert(
+            role.to_owned(),
+            json!({ "enabled": true, "opencode": opencode }),
+        );
+    }
+    Ok(json!({ "version": 1, "bots": bots }))
 }
 
 fn render_configs(
@@ -520,10 +612,7 @@ const MCP_COPIED_KEYS: [&str; 5] = ["type", "command", "cwd", "url", "timeout"];
 /// project to restate a global command (and risking secrets in a tracked
 /// file), the definition is read from the global OpenCode config and copied
 /// without `environment`/`headers`/`oauth`.
-fn resolve_mcp_disables(
-    config: &mut Map<String, Value>,
-    role: &str,
-) -> Result<(), Box<dyn Error>> {
+fn resolve_mcp_disables(config: &mut Map<String, Value>, role: &str) -> Result<(), Box<dyn Error>> {
     if config.get("mcp").is_none() {
         return Ok(());
     }
@@ -538,9 +627,9 @@ fn resolve_mcp_disables_with(
     let Some(mcp_value) = config.get_mut("mcp") else {
         return Ok(());
     };
-    let mcp = mcp_value.as_object_mut().ok_or_else(|| {
-        invalid_data(format!("bots.{role}.opencode.mcp must be an object"))
-    })?;
+    let mcp = mcp_value
+        .as_object_mut()
+        .ok_or_else(|| invalid_data(format!("bots.{role}.opencode.mcp must be an object")))?;
     let Some(disable) = mcp.remove(MCP_DISABLE_KEY) else {
         return Ok(());
     };
@@ -607,7 +696,9 @@ fn load_global_mcp_servers() -> Map<String, Value> {
         let Ok(text) = fs::read_to_string(&path) else {
             continue;
         };
-        let Ok(value) = serde_json::from_str::<Value>(&strip_jsonc(text.trim_start_matches('\u{feff}'))) else {
+        let Ok(value) =
+            serde_json::from_str::<Value>(&strip_jsonc(text.trim_start_matches('\u{feff}')))
+        else {
             continue;
         };
         let Some(mcp) = value.get("mcp").and_then(Value::as_object) else {
@@ -616,7 +707,9 @@ fn load_global_mcp_servers() -> Map<String, Value> {
         if let Some(v2) = mcp.get("servers").and_then(Value::as_object) {
             for (name, definition) in v2 {
                 if definition.is_object() {
-                    servers.entry(name.clone()).or_insert_with(|| definition.clone());
+                    servers
+                        .entry(name.clone())
+                        .or_insert_with(|| definition.clone());
                 }
             }
         }
@@ -625,7 +718,9 @@ fn load_global_mcp_servers() -> Map<String, Value> {
                 continue;
             }
             if definition.get("type").is_some() {
-                servers.entry(name.clone()).or_insert_with(|| definition.clone());
+                servers
+                    .entry(name.clone())
+                    .or_insert_with(|| definition.clone());
             }
         }
     }
@@ -683,8 +778,7 @@ fn strip_jsonc(text: &str) -> String {
             }
             if bytes[index + 1] == b'*' {
                 index += 2;
-                while index + 1 < bytes.len()
-                    && !(bytes[index] == b'*' && bytes[index + 1] == b'/')
+                while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/')
                 {
                     index += 1;
                 }

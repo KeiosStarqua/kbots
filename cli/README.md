@@ -125,10 +125,15 @@ are resolved relative to the project and written as absolute paths so service
 working directories do not change their meaning. Generated JSONC files use
 valid JSON syntax. The next `--overwrite` replaces them from the manifest.
 
-Projects that already have per-bot OpenCode configs are not auto-migrated:
-copy their settings into `.agents/bot/kbots.json`, then run
-`kbots project configure --overwrite`. Project-specific instructions and
-plugins stay local instead of being copied between repositories.
+Projects that already have per-bot OpenCode configs are adopted instead of
+refused: `project add` / `project configure` read each existing
+`.agents/bot/<role>/opencode.jsonc` (JSONC — comments and trailing commas are
+fine), derive `.agents/bot/kbots.json` from them (the project-specific
+`$schema` is dropped; roles without a config get the starter defaults), and
+leave the config files byte-identical. Project-specific instructions and
+plugins stay local instead of being copied between repositories. Use
+`--overwrite` afterwards only if you want the configs regenerated from the
+new manifest.
 
 MCP servers are declared globally in OpenCode, so every session in the
 project would otherwise load all of them. A role can switch individual
@@ -166,7 +171,8 @@ files from the templates embedded at build time. Missing files are created;
 files identical to the template are left alone; customized files are kept unless
 `--force` is passed, in which case each is backed up next to the original as
 `AGENTS.md.bak` (then `AGENTS.md.bak.N`) before the template is written. The
-project manifest and OpenCode configs are not touched.
+project manifest and OpenCode configs are not touched; the only other write is
+the stamp's git-ignore entry (below).
 
 ### Per-repo scaffolding version
 
@@ -181,6 +187,9 @@ copies manageable across kbots upgrades, seeding writes a local stamp at
 
 - `kbotsVersion` is the release that last wrote the scaffolding (the deploy
   version embedded by `./install.sh`; `0.1.0` for a dev build).
+- The stamp is machine-local state, so seeding appends `.scaffold.json` to
+  `.agents/bot/.gitignore` (creating that file when missing); it never appears
+  as an untracked change.
 - `files` records the content hash of every file kbots wrote. After a kbots
   upgrade, `kbots project sync` **upgrades files whose bytes are unchanged
   since the recorded sync**, keeps customized files, and reports `previous`
