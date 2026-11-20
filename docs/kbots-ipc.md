@@ -64,6 +64,7 @@ Initial CLI methods:
 | `project watch` (no `--project`) | `watchers.list` | `{}` — list configured watchers |
 | `agents start ROLE [--project REF] [--fresh]` | `agents.start` | `role`, optional `project`, optional `fresh` — agents are always hc terminals (headless retired) |
 | `agents show ID` | `agents.show` | `botId` |
+| `agents logs ID [--limit N]` | `agents.logs` | `botId`, optional `limit` (1-200) — session messages (newest first) + live terminal screen |
 | `agents stop ID` | `agents.stop` | `botId` |
 | `agents prompt ID TEXT` | `agents.prompt` | `botId`, `text` |
 | `agents interrupt ID` | `agents.interrupt` | `botId` |
@@ -87,6 +88,7 @@ Result shapes for the read and create methods:
 | `agents.list` | `{items: [{projectId?, projectPath, role, enabled, sessionID\|null, directory, registered, herdr?}], liveTerminals: [{address, agent?, name?, cwd, state?, status?, turn?, projectId?, role?}], filteredOut, registeredProjects, generatedAt, herdrUnavailable?, managed: [ManagedAgent]}` — `herdr` is attached on an exact role-directory match; `liveTerminals` is the read-only `hc ls` view, filtered to terminals inside registered project paths (`filteredOut` counts those hidden); `managed` lists every agent in the managed registry with its probed live status |
 | `agents.start` | ManagedAgent object: `{id, projectId, projectName?, role, mode, directory, status, sessionId, hcAddress, name, createdAt, updatedAt, stoppedAt, lastError?, live}` — idempotent while running; resumes the stopped agent's session |
 | `agents.show` | ManagedAgent object for one bot |
+| `agents.logs` | `{agentId, projectId, role, mode, status, sessionId, hcAddress, live, screen, messages: [{type, outcome, createdAt, text}]}` — read-only debug view: OpenCode session history plus the hc terminal screen (last 120 lines) for terminal agents |
 | `agents.stop` | `{id, projectId, role, mode, status, sessionId, stoppedAt, …}` — terminal is killed; the OpenCode session and history are kept |
 | `agents.prompt` | `{botId, mode, accepted, turn?}` — refuses unless the agent is idle (never `force`s past a blocked program) |
 | `agents.interrupt` | `{botId, mode, key?, outcome?}` — stop key (esc) to the hc terminal |

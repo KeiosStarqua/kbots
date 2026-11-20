@@ -46,6 +46,7 @@ import {
   HerdrBusyError,
   HerdrError,
   getTerminal,
+  readTerminal,
   interruptTerminal,
   killTerminal,
   listLiveTerminals,
@@ -489,6 +490,73 @@ export async function agentsPromptHandler(params: Record<string, unknown>): Prom
   const agent = mustGetAgent(params)
   const text = textParam(params.text)
   return promptAgentCore(agent, text)
+}
+
+/**
+ * Debug surface: one agent's OpenCode session history and (for terminal
+ * agents) its current screen. Read-only — never prompts, never types.
+ */
+export async function agentsLogsHandler(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const agent = mustGetAgent(params)
+  const rawLimit = params.limit
+  let limit = 30
+  if (rawLimit !== undefined && rawLimit !== null) {
+    if (typeof rawLimit !== "number" || !Number.isFinite(rawLimit)) {
+      throw invalidParams("limit must be a number between 1 and 200")
+    }
+    limit = Math.min(200, Math.max(1, Math.trunc(rawLimit)))
+  }
+
+  const screen =
+    agent.mode === "terminal" && agent.hcAddress
+      ? await readTerminal(agent.hcAddress, 120).catch(() => null)
+      : null
+
+  let messages: Array<Record<string, unknown>> = []
+  if (agent.sessionId) {
+    try {
+      const { client } = await makeOpencodeClient()
+      const listed = await client.message.list({ sessionID: agent.sessionId, limit, order: "desc" })
+      messages = (listed.data ?? []).map((message) => {
+        const record = message as unknown as Record<string, unknown>
+        const content = Array.isArray(record.content) ? (record.content as Array<Record<string, unknown>>) : []
+        const text = content
+          .filter((part) => part.type === "text" && typeof part.text === "string")
+          .map((part) => part.text as string)
+          .join("\n")
+          .slice(0, 4_000)
+        const time = record.time as Record<string, unknown> | undefined
+        return {
+          type: typeof record.type === "string" ? record.type : "unknown",
+          outcome: typeof record.outcome === "string" ? record.outcome : null,
+          createdAt: typeof time?.created === "number" ? new Date(time.created as number).toISOString() : null,
+          text,
+        }
+      })
+    } catch (error) {
+      messages = [
+        {
+          type: "error",
+          outcome: null,
+          createdAt: null,
+          text: `session history unavailable: ${error instanceof Error ? error.message : String(error)}`,
+        },
+      ]
+    }
+  }
+
+  return {
+    agentId: agent.id,
+    projectId: agent.projectId,
+    role: agent.role,
+    mode: agent.mode,
+    status: agent.status,
+    sessionId: agent.sessionId,
+    hcAddress: agent.hcAddress,
+    live: await probeAgent(agent),
+    screen,
+    messages,
+  }
 }
 
 export async function agentsShowHandler(params: Record<string, unknown>): Promise<Record<string, unknown>> {

@@ -185,6 +185,13 @@ enum AgentCommands {
     },
     /// Show one agent and probe its runtime.
     Show { bot_id: String },
+    /// Print an agent's session history and its live terminal screen.
+    Logs {
+        bot_id: String,
+        /// How many messages to fetch (1-200, default 30).
+        #[arg(long)]
+        limit: Option<usize>,
+    },
     /// Stop one agent (keeps its OpenCode session and history).
     Stop { bot_id: String },
     /// Send a prompt to one agent.
@@ -380,6 +387,10 @@ fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> 
             ("agents.start", json!({ "role": role, "project": project, "fresh": fresh }))
         },
             AgentCommands::Show { bot_id } => ("agents.show", json!({ "botId": bot_id })),
+            AgentCommands::Logs { bot_id, limit } => (
+                "agents.logs",
+                json!({ "botId": bot_id, "limit": limit }),
+            ),
             AgentCommands::Stop { bot_id } => ("agents.stop", json!({ "botId": bot_id })),
             AgentCommands::Prompt { bot_id, text } => {
                 ("agents.prompt", json!({ "botId": bot_id, "text": text }))

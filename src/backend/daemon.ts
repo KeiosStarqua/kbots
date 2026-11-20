@@ -47,6 +47,7 @@ import {
   agentsInterruptHandler,
   agentsPromptHandler,
   agentsShowHandler,
+  agentsLogsHandler,
   reconcileAgents,
 } from "./bots/agents.ts"
 import {
@@ -150,6 +151,7 @@ function buildHandlers(socket: string, secondarySocket?: string): Record<string,
     "agents.list": agentsListHandler,
     "agents.start": agentsStartHandler,
     "agents.show": agentsShowHandler,
+    "agents.logs": agentsLogsHandler,
     "agents.stop": agentsStopHandler,
     "agents.prompt": agentsPromptHandler,
     "agents.interrupt": agentsInterruptHandler,

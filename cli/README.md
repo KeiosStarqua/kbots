@@ -34,6 +34,7 @@ kbots prj watch --project PRJ-1
 kbots agents start git
 kbots agents start ops --project api-service
 kbots agents show AGT-1
+kbots ag logs AGT-1                       # session history + live terminal screen
 kbots agents prompt AGT-1 "Review PR #42"
 kbots agents interrupt AGT-1
 kbots agents stop AGT-1
@@ -75,6 +76,7 @@ driven with:
 kbots agents start git                           # hc terminal, same as default for task CEOs
 kbots agents start git --fresh                  # new session instead of resuming
 kbots agents show AGT-1
+kbots ag logs AGT-1                       # session history + live terminal screen
 kbots agents prompt AGT-1 "Review PR #42"
 kbots agents interrupt AGT-1                    # esc, session kept
 kbots agents stop AGT-1                         # terminal killed, session kept

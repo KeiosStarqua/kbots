@@ -152,7 +152,12 @@ function autoProvisionWatchers(): void {
 const lastPollAt = new Map<string, number>()
 const lastDeferLogAt = new Map<string, number>()
 const lastAttemptAt = new Map<string, number>()
+const lastFailureAt = new Map<string, number>()
 const RETRY_ATTEMPT_MS = 15_000
+// After a failed delivery, back off longer than the poll loop: a prompt that
+// lands in the input box without submitting must not be pasted again 15 s
+// later (that piled text up in the terminal).
+const FAILED_RETRY_MS = 120_000
 
 function buildPrompt(projectName: string, projectId: string, paths: string[], total: number, maxPaths: number): string {
   const shown = paths.slice(0, maxPaths)
@@ -214,6 +219,8 @@ async function tick(): Promise<void> {
 
       const lastAttempt = lastAttemptAt.get(watcher.projectId) ?? 0
       if (now - lastAttempt < RETRY_ATTEMPT_MS) continue
+      const lastFailure = lastFailureAt.get(watcher.projectId) ?? 0
+      if (now - lastFailure < FAILED_RETRY_MS) continue
       lastAttemptAt.set(watcher.projectId, now)
 
       const agent = listAgents().find(
@@ -246,6 +253,7 @@ async function tick(): Promise<void> {
       } catch (error) {
         // Busy/blocked (or another transient refusal): keep the fingerprint
         // unreported so we retry once the agent is idle — do not drop it.
+        lastFailureAt.set(watcher.projectId, now)
         const lastDefer = lastDeferLogAt.get(watcher.projectId) ?? 0
         if (now - lastDefer > DEFER_LOG_MS) {
           lastDeferLogAt.set(watcher.projectId, now)

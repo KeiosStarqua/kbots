@@ -39,6 +39,7 @@ pub fn render(method: &str, value: &Value, show_finished: bool) -> Option<String
             render_agent_detail(value),
             crate::render_bots::agent_section(value)
         )),
+        "agents.logs" => Some(render_agent_logs(value)),
         "agents.stop" => Some(render_agent_action(value, "stopped")),
         "agents.prompt" => Some(render_agent_action(value, "accepted")),
         "agents.interrupt" => Some(render_agent_interrupt(value)),
@@ -681,6 +682,37 @@ fn render_agent_action(value: &Value, verb: &str) -> String {
             }
         }
     }
+}
+
+fn render_agent_logs(value: &Value) -> String {
+    let id = string(value, "id").or_else(|| string(value, "agentId")).unwrap_or_else(|| "?".to_owned());
+    let status = string(value, "status").unwrap_or_else(|| "?".to_owned());
+    let mode = string(value, "mode").unwrap_or_else(|| "?".to_owned());
+    let session = string(value, "sessionId").unwrap_or_else(|| "-".to_owned());
+    let mut out = format!("{BOLD}{id}{RESET}  {mode} · {status} · session {session}");
+    if let Some(screen) = value.get("screen").and_then(Value::as_str) {
+        let tail: Vec<&str> = screen.lines().rev().take(40).collect();
+        out.push_str(&format!("\n\n{BOLD}SCREEN (last 40 lines){RESET}"));
+        for line in tail.into_iter().rev() {
+            out.push_str(&format!("\n{DIM}{line}{RESET}"));
+        }
+    }
+    let messages = value.get("messages").and_then(Value::as_array).cloned().unwrap_or_default();
+    out.push_str(&format!("\n\n{BOLD}MESSAGES ({}){RESET}", messages.len()));
+    if messages.is_empty() {
+        out.push_str("\n(no messages)");
+        return out;
+    }
+    for message in &messages {
+        let kind = string(message, "type").unwrap_or_else(|| "?".to_owned());
+        let created = string(message, "createdAt")
+            .map(|ts| ts.get(0..19).map(str::to_owned).unwrap_or(ts).replace('T', " "))
+            .unwrap_or_else(|| "-".to_owned());
+        let text = string(message, "text").unwrap_or_default();
+        let text = truncate_chars(&text.replace('\n', " "), 220);
+        out.push_str(&format!("\n{DIM}{created}{RESET}  {kind}  {text}"));
+    }
+    out
 }
 
 fn render_agent_interrupt(value: &Value) -> String {

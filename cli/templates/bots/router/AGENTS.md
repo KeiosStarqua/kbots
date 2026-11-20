@@ -50,6 +50,7 @@ Bots in this repo (agents):
 - `kb ag ls -p <project> [--all]` — managed bots (ceo/git/ops) plus live
   terminals; finished ones collapse into one line unless `--all`.
 - `kb ag show <AGT-n>` — one agent, its live terminal/session state.
+- `kb ag logs <AGT-n> [--limit N]` — the agent's session history plus its live terminal screen (debugging stuck or silent bots).
 - `kb ag start ceo|git|ops [-p <project>] [--fresh]` — spawn an hc terminal;
   resumes the stopped agent's session (same session and history).
 - `kb ag prompt <AGT-n> "…"` — send instructions; refused unless the bot is

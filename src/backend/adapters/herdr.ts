@@ -248,14 +248,46 @@ export async function sendPromptIfIdle(
   try {
     const stdout = await execHc(["send", "--if", "idle", address, text], timeoutMs)
     const parsed = parseJson(stdout, "send") as Record<string, unknown>
-    return {
-      turn: typeof parsed.turn === "number" ? parsed.turn : null,
-      status: typeof parsed.status === "string" ? parsed.status : null,
+    let turn = typeof parsed.turn === "number" ? parsed.turn : null
+    let status = typeof parsed.status === "string" ? parsed.status : null
+    // OpenCode collapses a multi-line paste into a "[Pasted ~N lines]" block;
+    // the Enter that hc sends only accepts the paste. When hc reports the send
+    // did not start a turn, press Enter once more to submit the block, then
+    // confirm the program actually started working. A send that stays
+    // unsubmitted is a delivery failure — never report success (that is how
+    // unsent prompts used to pile up in the input box).
+    if (parsed.started !== true) {
+      await execHc(["keys", address, "enter"], timeoutMs).catch(() => {})
+      const terminal = await getTerminal(address, timeoutMs).catch(() => null)
+      status = terminal?.status?.state ?? status
+      const afterTurn = terminal?.turn ?? turn
+      const started = status === "working" || (afterTurn !== null && turn !== null && afterTurn > turn)
+      if (!started) {
+        throw new HerdrBusyError(`agent ${address} accepted the text but did not start a turn (input pending)`)
+      }
+      turn = afterTurn
     }
+    return { turn, status }
   } catch (error) {
     if (error instanceof HerdrError && (error.code === 10 || error.code === 9)) {
       throw new HerdrBusyError(error.message)
     }
     throw error
+  }
+}
+
+/// Read a terminal's screen and history (`hc read`), capped to the last
+/// `maxLines` lines. Read-only; never types into the program.
+export async function readTerminal(
+  address: string,
+  maxLines = 120,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<string | null> {
+  try {
+    const stdout = await execHc(["read", address], timeoutMs)
+    const lines = stdout.replace(/\r/g, "").split("\n")
+    return lines.slice(-Math.max(1, maxLines)).join("\n")
+  } catch {
+    return null
   }
 }
