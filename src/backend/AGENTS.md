@@ -23,7 +23,7 @@
 
 - Keep modules separated by responsibility. Move transitional entry points (`smoke.ts`, `cli/control.ts`, `cli/start-sessions.ts`) into the responsibility modules as the orchestrator is built.
 - `docs/opencode-control.md` owns embedded SDK setup, local service client, provider behavior, and session commands. `docs/kbots-ipc.md` owns the daemon transport contract. Keep both current when behavior changes.
-- Daemon background loops: watcher (1 s), nudger (60 s), maintenance (60 s). The maintenance tick reconciles agents and stops CEO terminals whose task is already terminal after a grace period; it reuses `stopAgentCore`, so sessions are kept. Do not add session deletion to it — "Do not delete sessions" stays the contract.
+- Daemon background loops: watcher (1 s), nudger (60 s), maintenance (60 s). The maintenance tick reconciles agents and stops CEO terminals whose task is already terminal after a grace period; it reuses `stopAgentCore`, so sessions are kept. Do not add session deletion to it — "Do not delete sessions" stays the contract. The watcher ensures a live git agent (`agents.start`, skipping operator stops, 2-minute retry backoff) and sends a branch-scoped prompt: primary branch commits/pushes the whole change set, other branches are inspect-only.
 - `orchestrator/router.selfcheck.ts` is a self-check script, not a test suite.
 
 ## Verification
