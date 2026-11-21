@@ -22,7 +22,7 @@ The package has three entry points:
 ## Control Center starter
 
 The workspace separates the Bun backend in `src/backend/` from the Rust/Slint
-desktop client in `gui/control-center/` and the Rust/Ratatui terminal client in
+desktop client in `gui/` and the Rust/Ratatui terminal client in
 `tui/control-center/`. Both UI clients connect to one Bun daemon. The dashboards
 include navigation, project/task/agent/approval summaries, agent activity, a task
 queue, and recent events. The TUI renders live data (plus a task composer with
@@ -30,8 +30,28 @@ queue, and recent events. The TUI renders live data (plus a task composer with
 `kbots` automation entry
 point is in `cli/` and uses the v1 JSON-RPC socket contract.
 
-After completing application changes, install the latest GUI, TUI, and CLI
-binaries and verify the TypeScript backend with:
+## Install
+
+With Nix (flake + Home Manager), all clients and the daemon come from the
+store:
+
+```sh
+nix build .#                 # kbots, kb, kbots-tui, kbots-gui, kbots-daemon
+nix develop                  # Bun + Rust + Slint build deps
+
+# In your home-manager flake:
+# inputs.kbots = { url = "git+file:///path/to/kbots"; inputs.nixpkgs.follows = "nixpkgs"; };
+# modules = [ ./home.nix inputs.kbots.homeModules.default ];
+services.kbots.enable = true;
+```
+
+The module installs the package into `home.packages` and runs
+`kbots-daemon.service` from the package, with PATH pointing at the external
+`hc`/`opencode`/`codex` programs. See
+[`docs/deployment.md`](docs/deployment.md#nix-flake-the-install-path-on-nix-managed-hosts).
+
+On a non-Nix host, install the latest GUI, TUI, and CLI binaries and verify
+the TypeScript backend with:
 
 ```sh
 ./install.sh
@@ -51,7 +71,7 @@ manually with `bun run daemon`.
 Run the desktop starter with:
 
 ```sh
-cargo run --manifest-path gui/control-center/Cargo.toml
+cargo run --manifest-path gui/Cargo.toml
 ```
 
 Start the terminal dashboard in Herdr, tmux, SSH, or Mosh with:
@@ -61,7 +81,7 @@ cargo run --manifest-path tui/control-center/Cargo.toml
 ```
 
 By default the TUI is a minimal Codex chat terminal: one fullscreen embedded
-Codex CLI (`codex --sandbox workspace-write --ask-for-approval on-request`)
+Codex CLI (`codex --dangerously-bypass-approvals-and-sandbox`, owned by herdr-core)
 plus a one-line header (`kbots · CODEX · LIVE`) and a `✕ exit` button (or
 `Ctrl+]`) to quit. `kb tui --full` opens the complete operator dashboard
 (Overview, Projects, Tasks, Agents, Approvals, Activity log). The CLI can
@@ -85,7 +105,8 @@ editable `.agents/bot/kbots.json` manifest and generates each role's
 `opencode.jsonc`. Existing project configs are preserved. Edit the manifest
 and run `kbots project configure --overwrite` to regenerate them. Registry
 persistence is handled by the Bun daemon's local SQLite database. The daemon
-runs as the `kbots-daemon` systemd user service after `./install.sh`.
+runs as the `kbots-daemon` systemd user service from `./install.sh` on
+non-Nix hosts, or from the Nix Home Manager module (`services.kbots.enable`).
 
 Start the idle OpenCode sessions for enabled roles with `kbots sessions start`.
 The command reads `.agents/bot/kbots.json`, uses each bot directory so its
