@@ -3,9 +3,71 @@
 Laptop-local deployment only: no CI/CD, no containers, no remote servers. The
 repo owns everything under `src/backend/` (Bun daemon), `gui/` (Slint desktop
 client), `tui/control-center/` (Ratatui terminal client), and `cli/` (Rust
-automation CLI). `./install.sh` is the deploy path.
+automation CLI). There are two install paths: the Nix flake (used on
+Nix-managed hosts) and `./install.sh` (non-Nix hosts).
 
-## What ./install.sh does
+## Nix flake (the install path on Nix-managed hosts)
+
+`flake.nix` packages the whole stack and exposes a Home Manager module. It
+never touches `~/.local/bin` or an unmanaged systemd unit.
+
+| Output | Contents |
+|---|---|
+| `packages.default` / `packages.kbots` | `kbots`, `kb`, `kbots-tui`, `kbots-gui`, `kbots-daemon`, desktop entry |
+| `packages.kbots-cli` / `kbots-tui` / `kbots-gui` / `kbots-daemon` | one piece each |
+| `homeModules.default` | `services.kbots.*` (package, daemon service, PATH, socket) |
+| `devShells.default` | Bun, Rust, and the Slint/GUI build deps |
+
+Build and run from a checkout:
+
+```sh
+nix build .#            # everything, result/ holds the combined package
+nix build .#kbots-daemon
+nix develop             # Bun + cargo + pkg-config + font libs
+./result/bin/kbots-daemon --socket /tmp/kbots.sock
+```
+
+Home Manager integration (input + module + enable):
+
+```nix
+# flake.nix
+inputs.kbots = {
+  url = "git+file:///path/to/kbots";
+  inputs.nixpkgs.follows = "nixpkgs";
+};
+# modules
+modules = [ ./home.nix inputs.kbots.homeModules.default ];
+
+# home.nix
+services.kbots = {
+  enable = true;
+  # package = ...;                 # defaults to kbots.packages.<system>.default
+  # socket = "/run/user/1000/kbots.sock";
+  # path = [ ... ];                # where hc/opencode/codex live
+};
+```
+
+The module adds the package to `home.packages` and runs
+`kbots-daemon.service` as a systemd user service:
+`ExecStart=<package>/bin/kbots-daemon`, `Restart=on-failure`,
+`WantedBy=default.target`, with `KBOTS_DEPLOY_VERSION` set to the package
+version and PATH defaulting to
+`~/.local/bin:~/.opencode/bin:~/.bun/bin:/usr/local/bin:/usr/bin:/bin`.
+
+Notes:
+
+- The daemon is compiled to a standalone Bun binary; Bun is not a runtime
+  dependency of the installed daemon.
+- `bunDeps` in `flake.nix` is a fixed-output derivation running
+  `bun install --frozen-lockfile`. When `bun.lock` changes, `nix build
+  .#kbots-daemon` fails with `got: sha256-…`; paste that hash into
+  `outputHash` and rebuild.
+- Nix builds report the SemVer from `cli/Cargo.toml`; they do not create
+  `deploy/*` tags or `.deploy-version`.
+- Do not run `./install.sh` on a Nix-managed host: it would create competing
+  binaries in `~/.local/bin` and an unmanaged user unit.
+
+## What ./install.sh does (non-Nix hosts)
 
 Run it from anywhere; it resolves the repo root from its own path. Steps, in
 order:
@@ -54,8 +116,9 @@ order:
    "Deploy tags and versioning (SemVer + CalVer)" below.
 9. Warns if the install dir is not on `PATH`.
 
-`./install.sh` is the deploy path: clients and the daemon must run freshly
-deployed code, so never skip it after code changes. Use
+`./install.sh` is the deploy path on non-Nix hosts: clients and the daemon
+must run freshly deployed code, so never skip it after code changes there.
+On a Nix-managed host use `home-manager switch` instead. Use
 `KBOTS_SKIP_DAEMON_UNIT=1` only when the service restart is explicitly
 unwanted — then restart the daemon yourself
 (`systemctl --user restart kbots-daemon`). Use `KBOTS_INSTALL_DIR` when the

@@ -32,7 +32,7 @@
 - `cargo check` in `tui/control-center/`.
 - `cargo test` in `tui/control-center/` covers the frame codec, kitty flag tracking, key/mouse encoding, and terminal naming.
 - Live check: run the TUI in a real terminal, confirm `hc ls` shows `kbots-codex-<task>-<scope>`, type into Codex, quit with `Ctrl+]`, then confirm the terminal is still `live` (`hc read <address>`).
-- `./install.sh` from the repo root builds and installs the TUI and deploys the daemon; the TUI must be running freshly deployed code.
+- `./install.sh` from the repo root builds and installs the TUI and deploys the daemon on non-Nix hosts; on Nix-managed hosts `nix build .#` and `home-manager switch` install the same binaries from the flake and restart `kbots-daemon`. The TUI must be running freshly deployed code.
 
 ## Child DOX Index
 

@@ -1,6 +1,14 @@
 # dependencies (bun install)
 node_modules
 
+# code coverage
+coverage
+*.lcov
+
+# nix build outputs
+result
+result-*
+
 # last deploy stamp (written by ./install.sh)
 .deploy-version
 

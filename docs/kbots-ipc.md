@@ -4,7 +4,8 @@ The Bun daemon owns workflow state and side effects. GUI, TUI, and CLI are
 clients. The initial transport contract is one newline-delimited JSON-RPC 2.0
 request and response per Unix domain socket connection. The daemon is
 implemented (v1 minimal) and runs as the `kbots-daemon` systemd user service
-after `./install.sh` (opt out with `KBOTS_SKIP_DAEMON_UNIT=1`), or manually
+after `./install.sh` (opt out with `KBOTS_SKIP_DAEMON_UNIT=1`) or the Nix Home
+Manager module (`services.kbots.enable`), or manually
 with `bun run daemon` (equivalently `bun run src/backend/daemon.ts`) without
 systemd.
 
@@ -313,7 +314,8 @@ died would otherwise stall forever: the nudger only kicks live CEOs.
 Implemented alongside the Mission Control work; see
 [`plans/2026-11-18-task-centric-mission-control.md`](plans/2026-11-18-task-centric-mission-control.md).
 Nothing here is claimed deployed beyond what the repo contains — the daemon
-may still be serving v1 until `./install.sh` redeploys it. The v1 framing is
+may still be serving v1 until it is redeployed (`./install.sh` or
+`home-manager switch` on Nix). The v1 framing is
 unchanged: one request/response per connection, no streaming.
 
 | Method | Params | Result |
