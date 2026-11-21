@@ -64,6 +64,9 @@ Notes:
   `outputHash` and rebuild.
 - Nix builds report the SemVer from `cli/Cargo.toml`; they do not create
   `deploy/*` tags or `.deploy-version`.
+- The home-manager flake locks the kbots input to a commit: after changing
+  kbots, commit the repo, run `nix flake update kbots` in the home-manager
+  flake, then `home-manager switch`.
 - Do not run `./install.sh` on a Nix-managed host: it would create competing
   binaries in `~/.local/bin` and an unmanaged user unit.
 
