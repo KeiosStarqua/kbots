@@ -177,6 +177,9 @@
             };
           };
 
+          # One command to deploy: commit -> update flake input -> HM switch.
+          kbdeploy = pkgs.writeShellScriptBin "kbdeploy" (builtins.readFile ./deploy/kbdeploy.sh);
+
           desktop = pkgs.makeDesktopItem {
             name = "kbots";
             desktopName = "kbots Control Center";
@@ -193,6 +196,7 @@
               kbots-tui
               kbots-gui
               kbots-daemon
+              kbdeploy
               desktop
             ];
             # `kb` is the historical short alias for the automation CLI.

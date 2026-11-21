@@ -78,6 +78,8 @@ Default section order:
 
 When the user requests a durable behavior change, record it here or in the relevant child AGENTS.md
 
+- Deploy is one command: `kbdeploy "what changed"`. Do not give or run the underlying git / tag / `nix flake update` / `home-manager switch` steps unless `kbdeploy` itself is broken.
+
 ### Purpose
 
 - Local Bun tools for OpenCode SDK smoke checks and laptop-service control.
@@ -88,7 +90,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - This repo owns its package, lockfile, scripts, and `docs/` reference material.
 - Keep the Bun/TypeScript orchestration backend in `src/backend/`, the Slint desktop client in `gui/`, the Ratatui terminal client in `tui/control-center/`, and the automation CLI in `cli/`. GUI, TUI, and CLI talk to the daemon over a local IPC boundary; clients do not own bot scheduling or OpenCode sessions.
 - Keep sample UI state clearly marked until connected to the backend API. The TUI must restore terminal state on normal exit and on panics.
-- After completing application code changes, deploy with the Nix flake on Nix-managed hosts: `home-manager switch --flake ~/.config/home-manager#keios` rebuilds and reinstalls the clients plus the `kbots-daemon` user service from the store. `./install.sh` is the equivalent for non-Nix hosts: it synchronizes Bun dependencies, type-checks, builds the Rust clients, installs their binaries, and deploys `deploy/kbots-daemon.service` as the `kbots-daemon` systemd user service (enable + restart) when a user systemd session is available. Clients must always be running freshly deployed code; use `KBOTS_SKIP_DAEMON_UNIT=1 ./install.sh` only when explicitly unwanted, and then restart the daemon yourself (`systemctl --user restart kbots-daemon`). Use `KBOTS_INSTALL_DIR` when the default `~/.local/bin` is not the intended destination. Every `install.sh` deploy is tagged `deploy/YYYY.MM.DD.n` (CalVer, local) and stamped in `.deploy-version`; stable releases use SemVer `vX.Y.Z` tags. See `docs/deployment.md`.
+- **One command to deploy on Nix-managed hosts: `kbdeploy "what changed"`.** `deploy/kbdeploy.sh` is packaged as `bin/kbdeploy`: it commits the checkout, creates a local `deploy/YYYY.MM.DD.n` tag and pushes commit + tag, runs `nix flake update kbots`, runs `home-manager switch --flake ~/.config/home-manager#$(id -un)`, and shows `kb status`. After code changes, use only this command — never list or run the underlying steps. `./install.sh` is the equivalent one command for non-Nix hosts: it synchronizes Bun dependencies, type-checks, builds the Rust clients, installs their binaries, and deploys `deploy/kbots-daemon.service` as the `kbots-daemon` systemd user service (enable + restart) when a user systemd session is available. Clients must always be running freshly deployed code; use `KBOTS_SKIP_DAEMON_UNIT=1 ./install.sh` only when explicitly unwanted, and then restart the daemon yourself (`systemctl --user restart kbots-daemon`). Use `KBOTS_INSTALL_DIR` when the default `~/.local/bin` is not the intended destination. Every `install.sh` deploy is tagged `deploy/YYYY.MM.DD.n` (CalVer, local) and stamped in `.deploy-version`; stable releases use SemVer `vX.Y.Z` tags. See `docs/deployment.md`.
 - `flake.nix` and the Home Manager module are part of this repo's install contract. Keep `bunDeps.outputHash` in sync with `bun.lock` (a mismatch prints the expected hash), keep the daemon's version equal to `cli/Cargo.toml`, and never make the Nix install write to `~/.local/bin` or an unmanaged systemd unit.
 - Keep backend modules separated by responsibility: `cli/`, `opencode/`, `orchestrator/`, `bots/`, `workflows/`, `adapters/`, and `db/` under `src/backend/`.
 - The Rust CLI directory is `cli/` (package `kbots-cli`, binary `kbots`, alias `kb`). The GUI lives in `gui/`, not `gui/control-center/`.
@@ -119,8 +121,8 @@ When the user requests a durable behavior change, record it here or in the relev
 
 - Run `bun run tsc --noEmit` after code changes.
 - Use `bun run control --list-sessions` for read-only service verification.
-- `nix build .#` is the packaging check (all four binaries, desktop entry, `kb` alias); `nix develop` provides the Bun/Rust/Slint toolchain.
-- `./install.sh` is the full build/deploy check for application code changes on non-Nix hosts; on Nix-managed hosts use `nix build .#` and `home-manager switch`.
+- `nix build .#` is the packaging check (all four binaries, `kbdeploy`, desktop entry, `kb` alias); `nix develop` provides the Bun/Rust/Slint toolchain.
+- `kbdeploy "what changed"` is the one deploy command on Nix-managed hosts; `./install.sh` is the one deploy command on non-Nix hosts.
 
 ### Architecture Principles
 

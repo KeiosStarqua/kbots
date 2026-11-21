@@ -13,7 +13,7 @@ never touches `~/.local/bin` or an unmanaged systemd unit.
 
 | Output | Contents |
 |---|---|
-| `packages.default` / `packages.kbots` | `kbots`, `kb`, `kbots-tui`, `kbots-gui`, `kbots-daemon`, desktop entry |
+| `packages.default` / `packages.kbots` | `kbots`, `kb`, `kbots-tui`, `kbots-gui`, `kbots-daemon`, `kbdeploy`, desktop entry |
 | `packages.kbots-cli` / `kbots-tui` / `kbots-gui` / `kbots-daemon` | one piece each |
 | `homeModules.default` | `services.kbots.*` (package, daemon service, PATH, socket) |
 | `devShells.default` | Bun, Rust, and the Slint/GUI build deps |
@@ -62,11 +62,12 @@ Notes:
   `bun install --frozen-lockfile`. When `bun.lock` changes, `nix build
   .#kbots-daemon` fails with `got: sha256-…`; paste that hash into
   `outputHash` and rebuild.
-- Nix builds report the SemVer from `cli/Cargo.toml`; they do not create
-  `deploy/*` tags or `.deploy-version`.
-- The home-manager flake locks the kbots input to a commit: after changing
-  kbots, commit the repo, run `nix flake update kbots` in the home-manager
-  flake, then `home-manager switch`.
+- Nix builds report the SemVer from `cli/Cargo.toml` and do not write
+  `.deploy-version`; the home-manager lock records the deployed commit.
+- **One command per change: `kbdeploy "what changed"`** (in the package). It
+  commits the checkout, creates the `deploy/YYYY.MM.DD.n` tag and pushes
+  commit + tag, refreshes the home-manager input, switches, and runs
+  `kb status`. Do not run the underlying steps by hand.
 - Do not run `./install.sh` on a Nix-managed host: it would create competing
   binaries in `~/.local/bin` and an unmanaged user unit.
 

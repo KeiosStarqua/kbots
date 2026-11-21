@@ -36,13 +36,19 @@ With Nix (flake + Home Manager), all clients and the daemon come from the
 store:
 
 ```sh
-nix build .#                 # kbots, kb, kbots-tui, kbots-gui, kbots-daemon
+nix build .#                 # kbots, kb, kbots-tui, kbots-gui, kbots-daemon, kbdeploy
 nix develop                  # Bun + Rust + Slint build deps
 
 # In your home-manager flake:
 # inputs.kbots = { url = "git+file:///path/to/kbots"; inputs.nixpkgs.follows = "nixpkgs"; };
 # modules = [ ./home.nix inputs.kbots.homeModules.default ];
 services.kbots.enable = true;
+```
+
+After that, every code change is one command:
+
+```sh
+kbdeploy "what changed"   # commit + deploy tag + push + flake update + HM switch + kb status
 ```
 
 The module installs the package into `home.packages` and runs
