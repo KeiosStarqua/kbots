@@ -29,7 +29,7 @@
 ## Verification
 
 - `cargo check` (or `cargo build`) in this directory.
-- `./install.sh` from the repo root builds and installs the CLI alongside the other clients and deploys the daemon on non-Nix hosts; on Nix-managed hosts the flake package provides `kbots` and the `kb` alias, and `home-manager switch` installs it.
+- `./install.sh` from the repo root builds and installs the CLI alongside the other clients and deploys the daemon on non-Nix hosts; on Nix-managed hosts the flake package provides `kbots` and the `kb` alias, and `kbdeploy "what changed"` is the one deploy command (`nix build .#` is the packaging check).
 
 ## Child DOX Index
 

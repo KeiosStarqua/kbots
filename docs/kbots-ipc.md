@@ -134,11 +134,16 @@ session, the terminal, and the registry entry.
 [--cooldown N] [--max-paths N]` enables a per-project watcher in the daemon
 (SQLite `watchers` table; disabled by default). The daemon polls
 `git status --porcelain=v1` every `intervalSeconds`; once the tree has been
-quiet for `debounceSeconds` and the managed git agent for the project is
-idle, it prompts that agent with the delta (paths, capped at `maxPaths`) and
-a fixed instruction referencing the project's git-bot policy. If the agent is
+quiet for `debounceSeconds` it ensures the managed git agent is live —
+auto-starting/resuming it with `agents.start` when it is stopped, unless an
+operator explicitly stopped it; failed starts back off for 2 minutes — then
+prompts that idle agent with the current branch, the delta (paths, capped at
+`maxPaths`) and an instruction: on the primary branch (`main`/`master`) commit
+the whole change set and push, elsewhere inspect only. If the agent is
 busy/blocked the delta is re-computed next tick and retried — the prompt is
-never forced and never dropped silently. After every delivery a `cooldownSeconds`
+never forced and never dropped silently. Auto-starts and start failures are
+logged as `watch.git_agent_started`/`watch.git_agent_start_failed` events.
+After every delivery a `cooldownSeconds`
 quiet period suppresses further prompts so the agent's own edits don't
 re-trigger it (no prompt ping-pong). Each delivery (or deferral) is logged as
 a `watch.changed`/`watch.deferred` event. Only projects you explicitly enable
@@ -314,8 +319,8 @@ died would otherwise stall forever: the nudger only kicks live CEOs.
 Implemented alongside the Mission Control work; see
 [`plans/2026-11-18-task-centric-mission-control.md`](plans/2026-11-18-task-centric-mission-control.md).
 Nothing here is claimed deployed beyond what the repo contains — the daemon
-may still be serving v1 until it is redeployed (`./install.sh` or
-`home-manager switch` on Nix). The v1 framing is
+may still be serving v1 until it is redeployed (`./install.sh` on non-Nix
+hosts or `kbdeploy "what changed"` on Nix-managed hosts). The v1 framing is
 unchanged: one request/response per connection, no streaming.
 
 | Method | Params | Result |

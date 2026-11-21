@@ -19,7 +19,7 @@
 - Section navigation (Full layout): arrows, `h/j/k/l`, `n/p`, `1`–`7` (`1` = Codex), plus Moshi-style gesture chords behind the `Ctrl+B` prefix; wheel cycles sections off the Codex page (on the Codex page it goes to the attached program or its scrollback). Below 112 columns the dashboard switches to a compact single-column view; very short terminals show a summary and a resize hint.
 - It must restore the terminal on normal exit and on panics (RAII guards; mouse capture disabled on exit). v2 daemon methods missing from the running daemon surface as `daemon not updated yet`, never a crash.
 - Simple mode follows the attached Codex terminal: when the program ends (the core sends CLOSE), the final screen stays visible for a short grace (~1.5 s) and the TUI quits (same effect as `Ctrl+]`). `--full` keeps the dashboard open and only marks the Codex section `· exited`.
-- The Codex pane is one router terminal: a single pty at a time. The binding stores a `TASK-id` (not a list index, so task churn cannot re-point it), and switching the binding closes the previous Codex process and spawns the new context. Never keep a pty per task.
+- The Codex pane is one router terminal at a time. The binding stores a `TASK-id` (not a list index, so task churn cannot re-point it); switching detaches the current viewer and attaches the other task's terminal. `hc` owns every PTY; never create a local PTY or keep a viewer per task.
 
 ## Work Guidance
 
@@ -32,7 +32,7 @@
 - `cargo check` in `tui/control-center/`.
 - `cargo test` in `tui/control-center/` covers the frame codec, kitty flag tracking, key/mouse encoding, and terminal naming.
 - Live check: run the TUI in a real terminal, confirm `hc ls` shows `kbots-codex-<task>-<scope>`, type into Codex, quit with `Ctrl+]`, then confirm the terminal is still `live` (`hc read <address>`).
-- `./install.sh` from the repo root builds and installs the TUI and deploys the daemon on non-Nix hosts; on Nix-managed hosts `nix build .#` and `home-manager switch` install the same binaries from the flake and restart `kbots-daemon`. The TUI must be running freshly deployed code.
+- `./install.sh` from the repo root builds and installs the TUI and deploys the daemon on non-Nix hosts; on Nix-managed hosts `kbdeploy "what changed"` is the one deploy command (`nix build .#` is the packaging check, `nix develop` the toolchain). The TUI must be running freshly deployed code.
 
 ## Child DOX Index
 

@@ -24,7 +24,7 @@
 ## Verification
 
 - `cargo check` in this directory; run the app with `cargo run --manifest-path Cargo.toml` from here.
-- `./install.sh` from the repo root builds and installs the GUI and deploys the daemon on non-Nix hosts; on Nix-managed hosts `nix build .#` and `home-manager switch` install the same binaries from the flake and restart `kbots-daemon`.
+- `./install.sh` from the repo root builds and installs the GUI and deploys the daemon on non-Nix hosts; on Nix-managed hosts `kbdeploy "what changed"` is the one deploy command (`nix build .#` is the packaging check).
 
 ## Child DOX Index
 

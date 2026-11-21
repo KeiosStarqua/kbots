@@ -270,13 +270,15 @@ inside each project checkout.
 ## Build and change guide
 
 The repository has two build ecosystems: Bun/TypeScript for the backend and
-Cargo for the Rust clients. `./install.sh` installs frozen Bun dependencies,
-runs `bun run tsc --noEmit`, builds the GUI, TUI, and CLI in release mode,
-installs their binaries, writes the desktop launcher, and installs and
-restarts the `kbots-daemon` systemd user service from
-`deploy/kbots-daemon.service` (opt out with `KBOTS_SKIP_DAEMON_UNIT=1`). After
-every application code change, `./install.sh` is the deploy path — clients and
-the daemon must always run freshly deployed code.
+Cargo for the Rust clients. On non-Nix hosts, `./install.sh` installs frozen
+Bun dependencies, runs `bun run tsc --noEmit`, builds the GUI, TUI, and CLI in
+release mode, installs their binaries, writes the desktop launcher, and
+installs and restarts the `kbots-daemon` systemd user service from
+`deploy/kbots-daemon.service` (opt out with `KBOTS_SKIP_DAEMON_UNIT=1`). On
+Nix-managed hosts, `kbdeploy "what changed"` is the one deploy command;
+`nix build .#` is the packaging check and `nix develop` provides the toolchain.
+After every application code change, clients and the daemon must always run
+freshly deployed code. See `docs/deployment.md`.
 
 For detailed contracts, see:
 

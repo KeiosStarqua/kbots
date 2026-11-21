@@ -32,26 +32,35 @@ import {
   listWatchers,
   updateWatcherState,
   upsertWatcher,
+  type AgentRow,
+  type ProjectRow,
+  type WatcherRow,
 } from "../db/repositories.ts"
 import { RpcError, invalidParams } from "../errors.ts"
 import { isLiveAgentStatus } from "../db/repositories.ts"
-import { promptAgentCore } from "../bots/agents.ts"
+import { agentsStartHandler, promptAgentCore } from "../bots/agents.ts"
 
 const execFileAsync = promisify(execFile)
 const GIT_TIMEOUT_MS = 5_000
 const TICK_MS = 1_000
 const DEFER_LOG_MS = 60_000
 const MAX_PATHS_LIMIT = 50
+const START_RETRY_MS = 120_000
+const PRIMARY_BRANCHES = new Set(["main", "master"])
 
-type GitProbe = { fingerprint: string; paths: string[] } | { error: string }
+type GitProbe = { fingerprint: string; paths: string[]; branch: string } | { error: string }
 
 async function probeWorkingTree(projectPath: string): Promise<GitProbe> {
+  const opts = { timeout: GIT_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 }
   try {
-    const { stdout } = await execFileAsync(
-      "git",
-      ["-C", projectPath, "status", "--porcelain=v1", "--untracked-files=normal"],
-      { timeout: GIT_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 },
-    )
+    const [{ stdout }, branch] = await Promise.all([
+      execFileAsync(
+        "git",
+        ["-C", projectPath, "status", "--porcelain=v1", "--untracked-files=normal"],
+        opts,
+      ),
+      execFileAsync("git", ["-C", projectPath, "rev-parse", "--abbrev-ref", "HEAD"], opts),
+    ])
     const lines = stdout
       .split("\n")
       .map((line) => line.trimEnd())
@@ -62,7 +71,11 @@ async function probeWorkingTree(projectPath: string): Promise<GitProbe> {
       const arrow = raw.indexOf(" -> ")
       return arrow === -1 ? raw : raw.slice(arrow + 4)
     })
-    return { fingerprint: createHash("sha256").update(lines.join("\n")).digest("hex"), paths }
+    return {
+      fingerprint: createHash("sha256").update(lines.join("\n")).digest("hex"),
+      paths,
+      branch: branch.stdout.trim() || "unknown",
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return { error: message }
@@ -93,7 +106,7 @@ function clampInt(raw: unknown, field: string, min: number, max: number): number
   return Math.floor(value)
 }
 
-function watcherPayload(row: import("../db/repositories.ts").WatcherRow): Record<string, unknown> {
+function watcherPayload(row: WatcherRow): Record<string, unknown> {
   const project = getProject(row.projectId)
   return {
     projectId: row.projectId,
@@ -153,22 +166,78 @@ const lastPollAt = new Map<string, number>()
 const lastDeferLogAt = new Map<string, number>()
 const lastAttemptAt = new Map<string, number>()
 const lastFailureAt = new Map<string, number>()
+const lastStartAttemptAt = new Map<string, number>()
 const RETRY_ATTEMPT_MS = 15_000
 // After a failed delivery, back off longer than the poll loop: a prompt that
 // lands in the input box without submitting must not be pasted again 15 s
 // later (that piled text up in the terminal).
 const FAILED_RETRY_MS = 120_000
 
-function buildPrompt(projectName: string, projectId: string, paths: string[], total: number, maxPaths: number): string {
+function buildPrompt(
+  projectName: string,
+  projectId: string,
+  branch: string,
+  paths: string[],
+  total: number,
+  maxPaths: number,
+): string {
   const shown = paths.slice(0, maxPaths)
   const remainder = total - shown.length
   const lines = [
-    `Working tree changed in ${projectName} (${projectId}): ${total} file(s):`,
+    `Working tree changed in ${projectName} (${projectId}) on branch ${branch}: ${total} file(s):`,
     ...shown,
   ]
   if (remainder > 0) lines.push(`… and ${remainder} more`)
-  lines.push("Review the changes and follow this project's git bot instructions.")
+  if (PRIMARY_BRANCHES.has(branch)) {
+    lines.push(
+      "You own the primary branch: commit ALL working-tree changes on it in one atomic commit (including changes made by other agents), push, and report the commit. No further approval is needed.",
+    )
+  } else {
+    lines.push("This is not the primary branch. Inspect only; do not commit or push it unless explicitly asked.")
+  }
   return lines.join("\n")
+}
+
+/**
+ * The git bot must be live to receive a change prompt. Start (or resume) it
+ * on demand for a watched project instead of waiting for an operator to run
+ * `kb agents start git`. An explicit operator stop is still respected, and
+ * failed starts back off so a broken OpenCode/herdr setup cannot spin.
+ */
+async function ensureGitAgent(project: ProjectRow): Promise<AgentRow | null> {
+  const agents = listAgents().filter(
+    (candidate) => candidate.projectId === project.projectId && candidate.role === "git",
+  )
+  const live = agents.find((candidate) => isLiveAgentStatus(candidate.status))
+  if (live) return live
+  if (agents.length > 0 && agents.every((candidate) => candidate.stopReason === "operator")) return null
+
+  const lastAttempt = lastStartAttemptAt.get(project.projectId) ?? 0
+  if (Date.now() - lastAttempt < START_RETRY_MS) return null
+  lastStartAttemptAt.set(project.projectId, Date.now())
+  try {
+    await agentsStartHandler({ project: project.projectId, role: "git", mode: "terminal" })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    addEvent("watch.git_agent_start_failed", `Git agent for ${project.name} could not start: ${message}`, {
+      projectId: project.projectId,
+      message,
+    })
+    return null
+  }
+  const started = listAgents().find(
+    (candidate) =>
+      candidate.projectId === project.projectId
+      && candidate.role === "git"
+      && isLiveAgentStatus(candidate.status),
+  )
+  if (started) {
+    addEvent("watch.git_agent_started", `Git agent ${started.id} auto-started for ${project.name}`, {
+      projectId: project.projectId,
+      agentId: started.id,
+    })
+  }
+  return started ?? null
 }
 
 async function tick(): Promise<void> {
@@ -212,6 +281,12 @@ async function tick(): Promise<void> {
       const quietFor = changedAt ? now - Date.parse(changedAt) : Number.POSITIVE_INFINITY
       if (quietFor < watcher.debounceSeconds * 1_000) continue
       if (probe.fingerprint === watcher.reportedFingerprint) continue
+      // A clean tree is not a change to commit (e.g. the fork that cleaned up
+      // after the previous prompt). Mark it reported and do not start an agent.
+      if (probe.paths.length === 0) {
+        updateWatcherState(watcher.projectId, { reportedFingerprint: probe.fingerprint })
+        continue
+      }
 
       if (watcher.lastDeliveredAt && now - Date.parse(watcher.lastDeliveredAt) < watcher.cooldownSeconds * 1_000) {
         continue // cooldown after our own delivery — avoid prompt ping-pong
@@ -223,20 +298,27 @@ async function tick(): Promise<void> {
       if (now - lastFailure < FAILED_RETRY_MS) continue
       lastAttemptAt.set(watcher.projectId, now)
 
-      const agent = listAgents().find(
-        (candidate) => candidate.projectId === watcher.projectId && candidate.role === "git" && isLiveAgentStatus(candidate.status),
-      )
+      const agent = await ensureGitAgent(project)
       if (!agent) {
-        updateWatcherState(watcher.projectId, { reportedFingerprint: probe.fingerprint })
-        addEvent("watch.changed", `Working tree changed in ${project.name}; no running git agent`, {
+        // Keep the fingerprint unreported: the change is retried next tick
+        // once an agent is live (or a failed auto-start backs off).
+        addEvent("watch.changed", `Working tree changed in ${project.name}; no git agent available`, {
           projectId: project.projectId,
           delivered: false,
           filesChanged: probe.paths.length,
+          branch: probe.branch,
         })
         continue
       }
 
-      const text = buildPrompt(project.name, project.projectId, probe.paths, probe.paths.length, watcher.maxPaths)
+      const text = buildPrompt(
+        project.name,
+        project.projectId,
+        probe.branch,
+        probe.paths,
+        probe.paths.length,
+        watcher.maxPaths,
+      )
       try {
         await promptAgentCore(agent, text)
         updateWatcherState(watcher.projectId, {

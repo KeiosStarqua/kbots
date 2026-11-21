@@ -122,7 +122,7 @@ order:
 
 `./install.sh` is the deploy path on non-Nix hosts: clients and the daemon
 must run freshly deployed code, so never skip it after code changes there.
-On a Nix-managed host use `home-manager switch` instead. Use
+On a Nix-managed host use `kbdeploy "what changed"` instead. Use
 `KBOTS_SKIP_DAEMON_UNIT=1` only when the service restart is explicitly
 unwanted — then restart the daemon yourself
 (`systemctl --user restart kbots-daemon`). Use `KBOTS_INSTALL_DIR` when the
@@ -330,8 +330,9 @@ The daemon unlinks stale sockets at startup, so a restart after a crash is
 safe.
 
 If you changed only the daemon code and want to redeploy, `./install.sh` is
-the normal path (it restarts the service). Do NOT hand-edit the installed
-unit (`~/.config/systemd/user/kbots-daemon.service`) — it is regenerated from
+the normal path on non-Nix hosts (it restarts the service); on Nix-managed
+hosts use `kbdeploy "what changed"`. Do NOT hand-edit the installed unit
+(`~/.config/systemd/user/kbots-daemon.service`) — it is regenerated from
 `deploy/kbots-daemon.service` on every `./install.sh`.
 
 ## See also
