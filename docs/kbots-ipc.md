@@ -141,8 +141,10 @@ prompts that idle agent with the current branch, the delta (paths, capped at
 `maxPaths`) and an instruction: on the primary branch (`main`/`master`) commit
 the whole change set and push, elsewhere inspect only. If the agent is
 busy/blocked the delta is re-computed next tick and retried — the prompt is
-never forced and never dropped silently. Auto-starts and start failures are
-logged as `watch.git_agent_started`/`watch.git_agent_start_failed` events.
+never forced and never dropped silently. An explicit `kb agents stop git`
+(operator stop) is respected and will not be auto-restarted. Auto-starts and
+start failures are logged as `watch.git_agent_started`/
+`watch.git_agent_start_failed` events.
 After every delivery a `cooldownSeconds`
 quiet period suppresses further prompts so the agent's own edits don't
 re-trigger it (no prompt ping-pong). Each delivery (or deferral) is logged as
