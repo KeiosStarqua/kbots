@@ -407,6 +407,22 @@ fn attach(
         .ok_or_else(|| io::Error::other("hc attach returned no channel"))
 }
 
+/// Codex's startup update prompt blocks the embedded chat until someone
+/// answers it. Updates are managed by the owner, so disable the startup check
+/// for this invocation instead of auto-clicking a version-dependent popup.
+fn codex_argv(context: Option<&str>) -> Vec<String> {
+    let mut argv = vec![
+        "codex".to_string(),
+        "--dangerously-bypass-approvals-and-sandbox".to_string(),
+        "-c".to_string(),
+        "check_for_update_on_startup=false".to_string(),
+    ];
+    if let Some(context) = context {
+        argv.push(context.to_string());
+    }
+    argv
+}
+
 /// FNV-1a of the working directory, so two kbots TUIs in different projects
 /// never share a "free" Codex terminal.
 fn scope(cwd: &Path) -> String {
@@ -490,6 +506,9 @@ impl CodexTerm {
             "kbots.codex": "1",
             "kbots.scope": scope(cwd),
             "kbots.task": binding,
+            // Old terminals (before the startup update check was disabled)
+            // must not be reused: they may be parked on the update popup.
+            "kbots.update_check": "off",
         });
 
         let list = match setup.call("terminal.list", json!({})) {
@@ -506,13 +525,7 @@ impl CodexTerm {
             .find(|terminal| labels_match(terminal, &labels))
             .and_then(address_of);
 
-        let mut argv = vec![
-            "codex".to_string(),
-            "--dangerously-bypass-approvals-and-sandbox".to_string(),
-        ];
-        if let Some(context) = context {
-            argv.push(context.to_string());
-        }
+        let argv = codex_argv(context);
         let names: Vec<String> = live
             .iter()
             .filter_map(|terminal| terminal["name"].as_str().map(str::to_string))
@@ -1124,5 +1137,20 @@ mod tests {
         let second = terminal_name("TASK-12", cwd, &[first.clone()]);
         assert_ne!(first, second);
         assert!(second.len() <= 32);
+    }
+
+    #[test]
+    fn codex_disables_the_startup_update_prompt() {
+        let argv = codex_argv(None);
+        assert_eq!(
+            argv,
+            vec![
+                "codex",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "-c",
+                "check_for_update_on_startup=false",
+            ]
+        );
+        assert_eq!(codex_argv(Some("Continue TASK-12")), [argv, vec!["Continue TASK-12".to_string()]].concat());
     }
 }

@@ -29,8 +29,12 @@ same way every other kbots terminal is run. `hc` holds the PTY; the TUI is only
 a viewer attached to it over `hc connect`'s framed JSON-RPC stream
 (`terminal.attach`, then DATA/CREDIT/RESIZE/CLOSE frames). The terminal is
 named and labelled by kbots (`kbots-codex-<task>-<scope>`, labels
-`kbots.codex=1`, `kbots.scope=<cwd hash>`, `kbots.task=<binding>`), runs
-`codex --dangerously-bypass-approvals-and-sandbox` (yolo mode) with its cwd
+`kbots.codex=1`, `kbots.scope=<cwd hash>`, `kbots.task=<binding>`,
+`kbots.update_check=off`), runs
+`codex --dangerously-bypass-approvals-and-sandbox -c
+check_for_update_on_startup=false` (yolo mode; the startup update check is
+disabled so the embedded chat cannot block on an update popup — updates are
+managed outside the TUI) with its cwd
 inside the project's `.agents/bot/router/` folder (the task-router
 instructions for Codex). When the folder is missing, it is scaffolded from the
 embedded template automatically (identical to `kb project sync`; never
