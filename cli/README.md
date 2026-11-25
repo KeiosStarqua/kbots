@@ -28,8 +28,11 @@ kbots ag ls -p PRJ-1               # same, short form (alias: ag, ls, -p)
 kbots ag ls --all                  # include finished (stopped) agents in the Managed list
 # Inside a project that has `.agents/bot/kbots.json` (written by `project add`),
 # `ag ls` and `tasks ls` default to that project — no --project needed.
-# A directory that only has `.agents/bot/` for other tools is not scoped.
-# Passing --project always wins; outside any kbots project the unfiltered list is shown.
+# A directory that only has `.agents/bot/` prompts `Add <path> to kbots? [y/N]`
+# when stdin is a terminal. Yes scaffolds and registers it, then scopes the
+# command. No, or a piped stdin, leaves the list unfiltered.
+# Passing --project always wins. An unknown directory passed as --project
+# gets the same prompt; declining prints the unknown-project error.
 kbots prj ls          # `prj` for `project`, `ls` for `list`
 kbots prj watch --project PRJ-1
 kbots agents start git

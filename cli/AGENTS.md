@@ -19,7 +19,7 @@
 - `tasks update` moves a task only to `review`, `blocked`, `done`, `failed`, or `canceled`; the daemon validates the status and rejects terminal-state changes.
 - `tasks message TASK-ID TEXT` delivers a message to the task's CEO (or queues it when the CEO is busy); `tasks brief` and `tasks inbox` render daemon-generated summaries — never compute them client-side.
 - Stdout contract: human-readable on a TTY, pretty JSON when piped or `--json`. Keep both renderings in sync when adding subcommands.
-- `agents list` and `tasks list` scope to the enclosing project when `--project` is omitted. The marker is `.agents/bot/kbots.json`, walked up from the working directory. A bare `.agents/bot/` tree is not a kbots project, and those commands then show the unfiltered list. A daemon JSON-RPC error is printed as that error (an unknown project names `kb project add`); only a socket that never answered is reported as a connection failure.
+- `agents list`, `tasks list`, and `agents start` scope to the enclosing project when `--project` is omitted. The marker is `.agents/bot/kbots.json`, walked up from the working directory. A bare `.agents/bot/` tree prompts `Add <path> to kbots? [y/N]` on a terminal; yes runs the same scaffold and `projects.register` as `project add`, then continues the command scoped to that path. No, or a non-interactive stdin, leaves list commands unfiltered. An unknown directory in a daemon `unknown project` error gets the same one-time prompt and a single retry. Only a socket that never answered is reported as a connection failure.
 
 ## Work Guidance
 

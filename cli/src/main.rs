@@ -3,7 +3,7 @@ use std::{
     error::Error,
     fmt, fs,
     io::{self, BufRead, BufReader, IsTerminal, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{self, Command},
     time::Duration,
 };
@@ -36,10 +36,76 @@ fn current_project_path() -> Option<PathBuf> {
     enclosing_project_path(env::current_dir().ok()?)
 }
 
-/// Resolve `--project`, defaulting to the enclosing kbots project when run
-/// inside one. Falls back to None (unfiltered) outside any project.
-fn scoped_project(project: Option<String>) -> Option<String> {
-    project.or_else(|| current_project_path().map(|p| p.to_string_lossy().into_owned()))
+/// Nearest ancestor that has `.agents/bot/` but no `kbots.json`.
+/// Returns None when `start` is already inside a kbots project.
+fn unregistered_project_root(start: PathBuf) -> Option<PathBuf> {
+    if enclosing_project_path(start.clone()).is_some() {
+        return None;
+    }
+    let mut dir = start;
+    loop {
+        if dir.join(".agents/bot").is_dir() {
+            return fs::canonicalize(&dir).ok();
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+fn answer_is_yes(line: &str) -> bool {
+    matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+}
+
+/// Ask before writing the scaffold and registering `path`. A non-interactive
+/// stdin (piped scripts) skips the prompt and does not add the project.
+fn confirm_register(path: &Path) -> Result<bool, Box<dyn Error>> {
+    if !io::stdin().is_terminal() {
+        return Ok(false);
+    }
+    eprint!("Add {} to kbots? [y/N] ", path.display());
+    io::stderr().flush()?;
+    let mut line = String::new();
+    io::stdin().read_line(&mut line)?;
+    Ok(answer_is_yes(&line))
+}
+
+fn register_with_daemon(path: &Path, sockets: &[PathBuf]) -> Result<Value, Box<dyn Error>> {
+    let params = register_project(Some(path.to_path_buf()), None)?;
+    let registered = request_with_fallback(sockets, "projects.register", params)?;
+    let id = registered
+        .get("projectId")
+        .and_then(Value::as_str)
+        .unwrap_or("project");
+    let name = registered
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("project");
+    eprintln!("Registered {name} ({id}).");
+    Ok(registered)
+}
+
+/// Resolve `--project`. An omitted value uses the enclosing kbots project.
+/// A directory that only has `.agents/bot/` is offered for registration when
+/// stdin is a terminal; declining leaves the command unscoped.
+fn project_for_command(
+    explicit: Option<String>,
+    sockets: &[PathBuf],
+) -> Result<Option<String>, Box<dyn Error>> {
+    if let Some(project) = explicit.filter(|value| !value.trim().is_empty()) {
+        return Ok(Some(project));
+    }
+    if let Some(path) = current_project_path() {
+        return Ok(Some(path.to_string_lossy().into_owned()));
+    }
+    let Some(candidate) = unregistered_project_root(env::current_dir()?) else {
+        return Ok(None);
+    };
+    if !confirm_register(&candidate)? {
+        return Ok(None);
+    }
+    register_with_daemon(&candidate, sockets)?;
+    Ok(Some(candidate.to_string_lossy().into_owned()))
 }
 
 #[derive(Debug, Parser)]
@@ -301,9 +367,9 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             command: SessionCommands::Start { directory },
         } => run_sessions_start(directory, cli.json),
         command => {
-            let (method, params) = rpc_call(command)?;
             let candidates = socket_candidates(cli.socket);
-            let mut response = request_with_fallback(&candidates, method, params)?;
+            let (method, params) = rpc_call(command, &candidates)?;
+            let mut response = request_offering_register(&candidates, method, params)?;
             if method == "projects.list" {
                 project_config::enrich_projects_list(&mut response);
             }
@@ -333,7 +399,10 @@ fn print_json(value: &Value) {
     }
 }
 
-fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> {
+fn rpc_call(
+    command: Commands,
+    sockets: &[PathBuf],
+) -> Result<(&'static str, Value), Box<dyn Error>> {
     let request = match command {
         Commands::Status => ("system.status", json!({})),
         Commands::Events { limit } => ("events.list", json!({ "limit": limit })),
@@ -354,10 +423,13 @@ fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> 
                 }
                 ("tasks.create", params)
             }
-            TaskCommands::List { project, status } => (
-                "tasks.list",
-                json!({ "project": scoped_project(project), "status": status }),
-            ),
+            TaskCommands::List { project, status } => {
+                let project = project_for_command(project, sockets)?;
+                (
+                    "tasks.list",
+                    json!({ "project": project, "status": status }),
+                )
+            }
             TaskCommands::Show { task_id } => ("tasks.get", json!({ "taskId": task_id })),
             TaskCommands::Cancel { task_id } => ("tasks.cancel", json!({ "taskId": task_id })),
             TaskCommands::Message { task_id, text } => {
@@ -383,16 +455,20 @@ fn rpc_call(command: Commands) -> Result<(&'static str, Value), Box<dyn Error>> 
         },
         Commands::Agents { command } => match command {
             AgentCommands::List { project, .. } => {
-                ("agents.list", json!({ "project": scoped_project(project) }))
+                let project = project_for_command(project, sockets)?;
+                ("agents.list", json!({ "project": project }))
             }
             AgentCommands::Start {
                 role,
                 project,
                 fresh,
-            } => (
-                "agents.start",
-                json!({ "role": role, "project": project, "fresh": fresh }),
-            ),
+            } => {
+                let project = project_for_command(project, sockets)?;
+                (
+                    "agents.start",
+                    json!({ "role": role, "project": project, "fresh": fresh }),
+                )
+            }
             AgentCommands::Show { bot_id } => ("agents.show", json!({ "botId": bot_id })),
             AgentCommands::Logs { bot_id, limit } => {
                 ("agents.logs", json!({ "botId": bot_id, "limit": limit }))
@@ -612,6 +688,46 @@ fn request_with_fallback(
     .into())
 }
 
+fn unknown_project_directory(daemon: &DaemonRpcError) -> Option<PathBuf> {
+    let message = daemon.payload.get("message")?.as_str()?;
+    let path = message.strip_prefix("unknown project:")?.trim();
+    let path = PathBuf::from(path);
+    if !path.is_dir() {
+        return None;
+    }
+    fs::canonicalize(&path).ok().or(Some(path))
+}
+
+/// When the daemon rejects a directory it has never registered, ask to add
+/// it and retry the same call once. Declining, or a non-interactive stdin,
+/// keeps the original error.
+fn request_offering_register(
+    candidates: &[PathBuf],
+    method: &str,
+    params: Value,
+) -> Result<Value, Box<dyn Error>> {
+    match request_with_fallback(candidates, method, params.clone()) {
+        Ok(response) => Ok(response),
+        Err(error) => {
+            let Some(path) = error
+                .downcast_ref::<DaemonRpcError>()
+                .and_then(unknown_project_directory)
+            else {
+                return Err(error);
+            };
+            if !confirm_register(&path)? {
+                return Err(error);
+            }
+            register_with_daemon(&path, candidates)?;
+            let mut retry = params;
+            if let (Some(object), Some(path)) = (retry.as_object_mut(), path.to_str()) {
+                object.insert("project".to_owned(), json!(path));
+            }
+            request_with_fallback(candidates, method, retry)
+        }
+    }
+}
+
 #[cfg(unix)]
 fn request(socket: &std::path::Path, method: &str, params: Value) -> Result<Value, Box<dyn Error>> {
     use std::os::unix::net::UnixStream;
@@ -731,6 +847,67 @@ mod tests {
         let found = enclosing_project_path(nested).unwrap();
         assert_eq!(found, fs::canonicalize(&managed).unwrap());
 
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn approval_accepts_only_yes() {
+        assert!(answer_is_yes("y"));
+        assert!(answer_is_yes("YES"));
+        assert!(answer_is_yes("  yes \n"));
+        assert!(!answer_is_yes(""));
+        assert!(!answer_is_yes("n"));
+        assert!(!answer_is_yes("no"));
+    }
+
+    #[test]
+    fn unregistered_root_is_the_agents_bot_directory() {
+        let root = std::env::temp_dir().join(format!("kbots-offer-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+
+        let bare = root.join("bare");
+        fs::create_dir_all(bare.join(".agents/bot/ceo")).unwrap();
+        let nested = bare.join("src");
+        fs::create_dir_all(&nested).unwrap();
+        assert_eq!(
+            unregistered_project_root(nested).unwrap(),
+            fs::canonicalize(&bare).unwrap()
+        );
+
+        let managed = root.join("managed");
+        fs::create_dir_all(managed.join(".agents/bot")).unwrap();
+        fs::write(managed.join(".agents/bot/kbots.json"), "{}").unwrap();
+        assert!(unregistered_project_root(managed.join("src")).is_none());
+
+        let plain = root.join("plain/src");
+        fs::create_dir_all(&plain).unwrap();
+        assert!(unregistered_project_root(plain).is_none());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn unknown_project_directory_requires_a_real_directory() {
+        let missing = DaemonRpcError {
+            payload: json!({"code": -32602, "message": "unknown project: /no/such/kbots-project"}),
+        };
+        assert!(unknown_project_directory(&missing).is_none());
+
+        let named = DaemonRpcError {
+            payload: json!({"code": -32602, "message": "unknown project: PRJ-99"}),
+        };
+        assert!(unknown_project_directory(&named).is_none());
+
+        let root = std::env::temp_dir().join(format!("kbots-unknown-dir-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let message = format!("unknown project: {}", root.display());
+        let existing = DaemonRpcError {
+            payload: json!({"code": -32602, "message": message}),
+        };
+        assert_eq!(
+            unknown_project_directory(&existing).unwrap(),
+            fs::canonicalize(&root).unwrap()
+        );
         let _ = fs::remove_dir_all(&root);
     }
 }
