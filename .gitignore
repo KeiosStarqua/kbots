@@ -9,6 +9,9 @@ coverage
 result
 result-*
 
+# rust build outputs
+target/
+
 # last deploy stamp (written by ./install.sh)
 .deploy-version
 
