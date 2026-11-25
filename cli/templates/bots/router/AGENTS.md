@@ -83,5 +83,11 @@ Observability and gates:
   running bot's context.
 - When unsure between two routes, list both and ask. If a command fails, say
   so — do not silently work around it.
-- Answer in one line: `TASK-<n> · create|continue|ask · <reason>` for routing;
-  for bot actions: `<AGT-n> · <action> · <result>`.
+- Always include the full task status in your response: run `kb tasks show
+  TASK-<n>` (or `kb tasks list -p <project>` when more than one task matters)
+  and report the complete state — status, goal, project, bound CEO/agent, and
+  the latest note/message — not a truncated one-liner. Never answer a task
+  request without showing its status.
+- Lead with the one-line result — `TASK-<n> · create|continue|ask · <reason>`
+  for routing; `<AGT-n> · <action> · <result>` for bot actions — then include
+  the full task status block above it.
