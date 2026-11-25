@@ -164,7 +164,11 @@ export async function listLiveTerminals(timeoutMs: number = DEFAULT_TIMEOUT_MS):
   return result
 }
 
-/** All terminals (live and finished) carrying all these labels. */
+/**
+ * All terminals (live and finished) carrying all these labels. `hc ls` does
+ * not echo labels in its list output, so the labels used as the filter are
+ * merged into each result — callers can rely on them being present.
+ */
 export async function listTerminalsByLabels(
   labels: Record<string, string>,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
@@ -181,6 +185,7 @@ export async function listTerminalsByLabels(
   return parsed.terminals
     .map(toFullTerminal)
     .filter((terminal): terminal is HerdrFullTerminal => terminal !== null)
+    .map((terminal) => ({ ...terminal, labels: { ...labels, ...terminal.labels } }))
 }
 
 /** Spawn a program in a new background terminal. Throws HerdrError on failure. */

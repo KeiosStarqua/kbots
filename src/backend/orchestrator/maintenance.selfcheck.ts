@@ -25,6 +25,7 @@ const referenced = new Set(["t-live-kept"])
 const picked = selectOrphanTerminals(
   [
     terminal("t-orphan", { name: "kbots-kbots-ceo-abcd" }),
+    terminal("t-role-only", { labels: { kbotsRole: "git" } }),
     terminal("t-live-kept"),
     terminal("t-finished", { state: "finished" }),
     terminal("t-router", { labels: { owner: "codex" } }),
@@ -35,7 +36,7 @@ const picked = selectOrphanTerminals(
 
 assert.deepEqual(
   picked.map((item) => item.address),
-  ["t-orphan"],
+  ["t-orphan", "t-role-only"],
 )
 assert.equal(picked[0]?.name, "kbots-kbots-ceo-abcd")
 assert.equal(picked[0]?.labels.kbotsBotId, "AGT-1")

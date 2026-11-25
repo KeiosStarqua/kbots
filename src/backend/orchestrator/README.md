@@ -10,8 +10,8 @@ Background loops (one timer each, all `unref`-ed and stopped on shutdown):
 - `maintenance.ts` — periodic `reconcileAgents()`, the finished-terminal
   reaper, the orphan-terminal sweep, dead-CEO recovery, and stale-task
   continuation (60 s tick, `KBOTS_REAP_INTERVAL_MS`). The sweep kills live
-  terminals carrying a `kbotsBotId` label that no agent row references, after
-  two consecutive sightings so a spawn in progress is safe;
+  terminals carrying a kbots bot label (`kbotsBotId`/`kbotsRole`) that no agent
+  row references, after two consecutive sightings so a spawn in progress is safe;
   `KBOTS_ORPHAN_REAP=off` disables it. The reaper stops CEO terminals whose
   task already reached `done`/`failed`/`canceled` and has been quiet for
   `KBOTS_REAP_GRACE_MS`; it reuses `stopAgentCore`, so the OpenCode session and

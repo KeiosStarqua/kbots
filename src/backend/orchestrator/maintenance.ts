@@ -67,6 +67,7 @@ import {
 } from "../bots/agents.ts"
 import { ACTIVE_TASK_STATUSES, recoveryWindowMs, staleContinueEnabled } from "../bots/health.ts"
 import {
+  getTerminal,
   killTerminal,
   listTerminalsByLabels,
   type HerdrFullTerminal,
@@ -161,9 +162,9 @@ export interface OrphanTerminal {
 }
 
 /**
- * Pure selection rule for the sweep. Only terminals carrying a `kbotsBotId`
- * label are ours; everything else (router/task terminals, plain shells) is
- * left alone even when no registry row references it.
+ * Pure selection rule for the sweep. Only terminals carrying a kbots label
+ * (`kbotsBotId` or `kbotsRole`) are ours; everything else (router terminals,
+ * plain shells) is left alone even when no registry row references it.
  */
 export function selectOrphanTerminals(
   terminals: ReadonlyArray<{ address: string; state: string; name?: string | null; labels: Record<string, string> }>,
@@ -172,7 +173,8 @@ export function selectOrphanTerminals(
   return terminals.filter(
     (terminal) =>
       terminal.state === "live" &&
-      Object.prototype.hasOwnProperty.call(terminal.labels, "kbotsBotId") &&
+      (Object.prototype.hasOwnProperty.call(terminal.labels, "kbotsBotId") ||
+        Object.prototype.hasOwnProperty.call(terminal.labels, "kbotsRole")) &&
       !referencedAddresses.has(terminal.address),
   ).map((terminal) => ({
     address: terminal.address,
@@ -221,7 +223,16 @@ export async function reapOrphanTerminals(): Promise<number> {
       pendingOrphans.add(terminal.address)
       continue
     }
-    const { kbotsBotId: botId, kbotsRole: role, kbotsProjectId: projectId, kbotsTaskId: taskId } = terminal.labels
+    // `hc ls` omits labels; the role filter supplies one, but the full record
+    // has the bot/task ids that make the event useful to an operator.
+    let labels = terminal.labels
+    try {
+      const full = await getTerminal(terminal.address)
+      if (full) labels = { ...labels, ...full.labels }
+    } catch {
+      // keep the labels we already have
+    }
+    const { kbotsBotId: botId, kbotsRole: role, kbotsProjectId: projectId, kbotsTaskId: taskId } = labels
     try {
       await killTerminal(terminal.address)
       killed += 1
