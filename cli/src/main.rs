@@ -786,7 +786,6 @@ fn daemon_command(command: DaemonCommands, json_output: bool) -> Result<(), Box<
             }
             let child = child.spawn().map_err(|error| format!("cannot start daemon with bun: {error}"))?;
             let pid = child.id();
-            fs::create_dir_all(ipc::state_dir())?;
             fs::write(daemon_pid_file(), format!("{pid}\n"))?;
             emit("daemon.start", &json!({ "pid": pid, "started": true }), json_output);
         }

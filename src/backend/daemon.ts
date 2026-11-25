@@ -307,11 +307,14 @@ async function main(): Promise<void> {
 
   const secondary = bindUnix ? fallbackSocketPath(args.socket, path) : null
   const handlers = buildHandlers(path, secondary ?? undefined, tcp ?? undefined)
-  const accept = (socket: Socket) => acceptConnection(socket, handlers, authToken)
+  // Unix sockets stay protected by their 0600 file mode; only TCP carries the
+  // token so an opt-in TCP listener does not change local socket behavior.
+  const acceptUnix = (socket: Socket) => acceptConnection(socket, handlers, null)
+  const acceptTcp = (socket: Socket) => acceptConnection(socket, handlers, authToken)
   let unixServer: Server | null = null
-  if (bindUnix) unixServer = createServer(accept)
+  if (bindUnix) unixServer = createServer(acceptUnix)
   let tcpServer: Server | null = null
-  if (tcp) tcpServer = createServer(accept)
+  if (tcp) tcpServer = createServer(acceptTcp)
 
   let secondaryServer: Server | null = null
   const servers = [unixServer, tcpServer].filter((server): server is Server => server !== null)
@@ -328,7 +331,7 @@ async function main(): Promise<void> {
   process.on("SIGINT", shutdown)
   process.on("SIGTERM", shutdown)
 
-  if (secondary) secondaryServer = await bindSecondary(secondary, handlers, authToken)
+  if (secondary) secondaryServer = await bindSecondary(secondary, handlers, null)
 
   if (unixServer) {
     await new Promise<void>((resolvePromise, rejectPromise) => {
