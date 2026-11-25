@@ -124,12 +124,14 @@ bots
       → the nudger kicks this task automatically (KBOTS_NUDGE)
 ```
 
-The daemon also acts on two of these on its own: a CEO terminal whose task is
-finished is reaped (session kept), and a CEO that crashed while its task is
-still open is resumed against the same session, bounded by
+The daemon also acts on these on its own: a CEO terminal whose task is
+finished is reaped (session kept), a CEO that crashed while its task is still
+open is resumed against the same session, and an old task whose CEO stopped
+outside `KBOTS_RECOVER_WINDOW_MS` is continued by the stale-task step instead
+of staying in `researching` forever. Both resumes share the budget
 `KBOTS_RECOVER_MAX` (default 2) and `KBOTS_RECOVER_COOLDOWN_MS` (default 5
-min). `KBOTS_REAP=off` / `KBOTS_RECOVER=off` disable those steps. Sessions are
-never deleted.
+min). `KBOTS_REAP=off` / `KBOTS_RECOVER=off` / `KBOTS_STALE_CONTINUE=off`
+disable those steps. Sessions are never deleted.
 
 
 Use `--socket PATH` or `KBOTS_SOCKET` to select the daemon socket. By default,

@@ -92,6 +92,16 @@ export function recoveryWindowMs(): number {
   return Number.isFinite(raw) && raw >= 60_000 ? raw : 2 * 60 * 60 * 1000
 }
 
+/**
+ * Whether the maintenance loop also continues tasks older than the crash
+ * recovery window (`KBOTS_STALE_CONTINUE`, default on). Shared with the report
+ * so a stale stopped CEO says the routine will continue it instead of
+ * "too old for automatic recovery".
+ */
+export function staleContinueEnabled(): boolean {
+  return process.env.KBOTS_STALE_CONTINUE !== "off"
+}
+
 function isTaskStale(task: BotTaskRef, now: number): boolean {
   const updated = Date.parse(task.updatedAt)
   return !Number.isFinite(updated) || now - updated > recoveryWindowMs()
@@ -217,8 +227,10 @@ export function describeBot(
           {
             level: "warning",
             code: "ceo_stale_with_open_task",
-            message: `the agent stopped while task ${taskRef.taskId} is still ${taskRef.status} (too old for automatic recovery)`,
-            hint: "kbots agents start ceo --project <ref> resumes its session",
+            message: `the agent stopped while task ${taskRef.taskId} is still ${taskRef.status} (${staleContinueEnabled() ? "outside the recovery window; the maintenance routine will continue it" : "too old for automatic recovery"})`,
+            hint: staleContinueEnabled()
+              ? "the maintenance routine resumes it against the same session"
+              : "kbots agents start ceo --project <ref> resumes its session",
           },
           extra,
         )

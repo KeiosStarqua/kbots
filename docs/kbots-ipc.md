@@ -254,11 +254,11 @@ CEO session goes idle without marking its task done. Semantics:
 - Nudges are not user messages and do not enter `tasks.brief`/`tasks.inbox`.
   They are operational events, visible in `events.list` as `task.nudged`.
 
-## Maintenance loop (reconcile + reaper + recovery) — v7
+## Maintenance loop (reconcile + reaper + recovery + stale continuation) — v7
 
 The daemon runs one more timer besides the watcher and the nudger: a
 maintenance tick, default every 60 s (`KBOTS_REAP_INTERVAL_MS`, minimum 10 s).
-It does three things, in order:
+It does four things, in order:
 
 1. `reconcileAgents()` — the same probe every `agents.*` mutation runs, now
    also on a timer, so a terminal that exits between RPCs is noticed instead
@@ -268,7 +268,9 @@ It does three things, in order:
    period (`KBOTS_REAP_GRACE_MS`, default 10 min, measured from the task's
    `updated_at`).
 3. Dead-CEO recovery — resumes a CEO whose terminal failed while its task is
-   still open (next section).
+   still open and still inside the recovery window (next section).
+4. Stale-task continuation — resumes a CEO whose task is older than that
+   window, so an old task cannot stay in `researching` forever (below).
 
 Rules:
 
@@ -283,7 +285,7 @@ Rules:
   continues with the other agents and retries on the next tick.
 - `agent.reaped` is logged with `data: {agentId, sessionId, taskId, reason}`.
 - `KBOTS_REAP=off` skips the reaper step only; the reconcile tick keeps
-  running.
+  running. `KBOTS_STALE_CONTINUE=off` skips stale-task continuation only.
 - Overlapping ticks are skipped, so a slow reconcile cannot pile up.
 
 ## Dead-CEO recovery — v7
@@ -302,7 +304,7 @@ died would otherwise stall forever: the nudger only kicks live CEOs.
   report (hint: `kbots agents start ceo`). Reconcile stamps the other reasons
   (`exit`, `crash`, `terminal_missing`, `legacy_headless`).
 - Only tasks updated within `KBOTS_RECOVER_WINDOW_MS` (default 2 h) are
-  resumed; older work is reported for a human instead of restarted.
+  resumed here; older work is passed to the stale-task continuation step.
 - Recovery respects the per-project CEO cap (`KBOTS_CEO_CAP`, default 4): at
   the cap the attempt is deferred with a `task.ceo_recovery_deferred` event.
 - Bounded: each attempt spends one unit of `tasks.recoveries` (schema v7,
@@ -311,10 +313,34 @@ died would otherwise stall forever: the nudger only kicks live CEOs.
   budget is gone the task moves to `blocked` with a blocker note and a
   `task.ceo_unrecoverable` event, so a crash loop ends in the inbox rather
   than in an endless restart cycle. A failed attempt still spends a unit.
-- `KBOTS_RECOVER=off` disables the step; `KBOTS_RECOVER_MAX`,
-  `KBOTS_RECOVER_COOLDOWN_MS`, and `KBOTS_RECOVER_WINDOW_MS` tune it.
+- `KBOTS_RECOVER=off` disables both resume steps; `KBOTS_RECOVER_MAX`,
+  `KBOTS_RECOVER_COOLDOWN_MS`, and `KBOTS_RECOVER_WINDOW_MS` tune them.
 - Events: `bot.resumed`, `bot.resume_failed`, `task.ceo_recovered`,
   `task.ceo_recovery_failed`, `task.ceo_unrecoverable`.
+
+## Stale-task continuation — v7
+
+A task whose CEO stopped more than `KBOTS_RECOVER_WINDOW_MS` ago is rejected by
+the crash recovery step. The next tick's stale-task continuation step handles
+it in the same way: resume the CEO against its existing session and prompt it
+to continue the task, instead of leaving an old `researching` task open
+forever.
+
+- Eligibility is exactly what crash recovery skipped: an open task (`researching`,
+  `planning`, `delegating`, `running`) older than `KBOTS_RECOVER_WINDOW_MS`,
+  with a stopped/error CEO whose `stop_reason` is not `operator`. A live CEO is
+  never resumed twice; a cap-deferred attempt stays deferred.
+- It shares the recovery budget and rate limit — `tasks.recoveries` /
+  `tasks.last_recovery_at`, `KBOTS_RECOVER_MAX` (default 2),
+  `KBOTS_RECOVER_COOLDOWN_MS` (default 5 min), `KBOTS_CEO_CAP` (default 4).
+  When the budget is gone the task is moved to `blocked` with a blocker note.
+- `KBOTS_STALE_CONTINUE=off` disables this step; `KBOTS_RECOVER=off` disables it
+  together with crash recovery. The reaper and reconcile are unaffected.
+- The bot report for a stale stopped CEO says the maintenance routine will
+  continue it (code `ceo_stale_with_open_task`), and falls back to the manual
+  `agents start ceo` hint when the step is off.
+- Events: `task.stale_continued`, `task.stale_continue_failed`,
+  `task.stale_continue_deferred`, `task.stale_unrecoverable`.
 
 ## v2 methods (task-centric dispatch)
 

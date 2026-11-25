@@ -134,12 +134,29 @@ const task = (overrides: Partial<TaskRow> = {}): TaskRow => ({
   assert.equal(report.health.level, "warning")
 }
 
-// -- ...unless the task is already too old to recover automatically ----------
+// -- ...old tasks are continued by the maintenance routine -------------------
 {
   const old = task({ updatedAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString() })
   const report = describeBot(agent({ status: "stopped", stopReason: "exit" }), null, old)
   assert.equal(report.health.code, "ceo_stale_with_open_task")
-  assert.match(report.health.hint ?? "", /agents start ceo/)
+  assert.match(report.health.hint ?? "", /maintenance routine/)
+  assert.match(report.health.message, /maintenance routine will continue it/)
+}
+
+// -- ...unless stale continuation is switched off ----------------------------
+{
+  const saved = process.env.KBOTS_STALE_CONTINUE
+  try {
+    process.env.KBOTS_STALE_CONTINUE = "off"
+    const old = task({ updatedAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString() })
+    const report = describeBot(agent({ status: "stopped", stopReason: "exit" }), null, old)
+    assert.equal(report.health.code, "ceo_stale_with_open_task")
+    assert.match(report.health.hint ?? "", /agents start ceo/)
+    assert.match(report.health.message, /too old for automatic recovery/)
+  } finally {
+    if (saved === undefined) delete process.env.KBOTS_STALE_CONTINUE
+    else process.env.KBOTS_STALE_CONTINUE = saved
+  }
 }
 
 // -- a stopped CEO with no open task is fine ---------------------------------
@@ -200,4 +217,4 @@ const task = (overrides: Partial<TaskRow> = {}): TaskRow => ({
   assert.equal(report.model?.available, true)
 }
 
-console.log("health selfcheck: ok (19 cases)")
+console.log("health selfcheck: ok (20 cases)")

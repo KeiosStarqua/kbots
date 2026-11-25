@@ -2,7 +2,7 @@
  * Daemon maintenance: the periodic tick that keeps the registry honest and
  * reclaims terminals whose work is already finished.
  *
- * Two steps, in order:
+ * Three steps, in order:
  *  1. `reconcileAgents()` — the same probe `agents.*` mutations run, now also
  *     on a timer, so a terminal that exits between RPCs is noticed instead of
  *     waiting for the next client call.
@@ -10,6 +10,10 @@
  *     (`done`, `failed`, `canceled`) for longer than the grace period is
  *     stopped. The OpenCode session and its history stay untouched, exactly as
  *     `agents.stop` leaves them; only the terminal process goes away.
+ *  3. Stale-task continuation — a CEO that stopped outside the crash recovery
+ *     window is resumed by the same path, so an old task cannot sit in
+ *     `researching` forever. It shares the recovery budget, cooldown and CEO
+ *     cap; `KBOTS_STALE_CONTINUE=off` disables only this step.
  *
  * Deliberately narrow:
  *  - Only `role = ceo`, `mode = terminal`, `status = running` agents with a
@@ -19,14 +23,17 @@
  *    writing its final report is not killed mid-turn.
  *  - A kill failure marks the row `error` and logs `agent.reap_failed`; the
  *    loop continues and retries the other agents on the next tick.
- *  - Recovery skips a task older than `KBOTS_RECOVER_WINDOW_MS` (default 2 h):
- *    resuming stale work is a human decision, and it is reported instead.
+ *  - Crash recovery skips a task older than `KBOTS_RECOVER_WINDOW_MS`
+ *    (default 2 h); the stale-task step handles those with the same bounded
+ *    budget instead of leaving them open forever.
  *
  * Env:
  *  - `KBOTS_REAP=off` — skip the reaper step; the reconcile tick keeps running.
  *  - `KBOTS_REAP_INTERVAL_MS` — tick period, default 60000, minimum 10000.
  *  - `KBOTS_REAP_GRACE_MS` — quiet time after the task finished, default
  *    600000 (10 min); `0` reaps on the first tick after the task finishes.
+ *  - `KBOTS_STALE_CONTINUE=off` — skip stale-task continuation; crash recovery
+ *    and the reaper keep running. `KBOTS_RECOVER=off` disables both resumes.
  */
 import {
   addEvent,
@@ -51,7 +58,7 @@ import {
   resumeAgentCore,
   stopAgentCore,
 } from "../bots/agents.ts"
-import { ACTIVE_TASK_STATUSES, recoveryWindowMs } from "../bots/health.ts"
+import { ACTIVE_TASK_STATUSES, recoveryWindowMs, staleContinueEnabled } from "../bots/health.ts"
 
 const DEFAULT_INTERVAL_MS = 60_000
 const DEFAULT_GRACE_MS = 10 * 60 * 1000
@@ -135,6 +142,7 @@ export async function tick(): Promise<void> {
   await reconcileAgents()
   await reapFinishedTerminals()
   await recoverLostTaskCeos()
+  await continueStaleTaskCeos()
 }
 
 // -- dead-CEO recovery ------------------------------------------------------
@@ -253,6 +261,95 @@ export async function recoverLostTaskCeos(
     }
   }
   return { recovered, blocked }
+}
+
+// -- stale-task continuation -------------------------------------------------
+
+/**
+ * Continue an old task whose CEO stopped outside the crash recovery window.
+ *
+ * `recoverLostTaskCeos` deliberately ignores tasks older than
+ * `KBOTS_RECOVER_WINDOW_MS`; without a second path a task whose CEO died days
+ * ago stays in `researching` forever. This is that second path: it uses the
+ * same budget (`tasks.recoveries`), cooldown (`last_recovery_at`) and CEO cap,
+ * resumes the CEO against its existing session and asks it to continue. When
+ * the budget runs out the task is blocked with a note instead of being
+ * restarted forever.
+ */
+export async function continueStaleTaskCeos(
+  now: number = Date.now(),
+): Promise<{ continued: number; blocked: number }> {
+  if (!recoveryEnabled() || !staleContinueEnabled()) return { continued: 0, blocked: 0 }
+  let continued = 0
+  let blocked = 0
+  for (const task of listTasksByStatus([...ACTIVE_TASK_STATUSES])) {
+    // Fresh work belongs to the crash recovery step; only handle what that
+    // step skipped for being too old.
+    if (!isStale(task, now)) continue
+    const ceo = getTaskCeoAgent(task.taskId)
+    if (!ceo || isLiveAgentStatus(ceo.status)) continue
+    if (!isRecoverable(ceo)) continue
+
+    if (task.recoveries >= recoveryMax()) {
+      transitionTaskStatus(task.taskId, "blocked")
+      appendBriefBlocker(
+        task.taskId,
+        `Stale task CEO continued ${task.recoveries} times; still ${task.status}, needs a human`,
+      )
+      addEvent("task.stale_unrecoverable", `Task ${task.taskId} blocked: stale task needs a human`, {
+        taskId: task.taskId,
+        agentId: ceo.id,
+        recoveries: task.recoveries,
+      })
+      blocked += 1
+      continue
+    }
+
+    const lastAttempt = task.lastRecoveryAt ? Date.parse(task.lastRecoveryAt) : Number.NaN
+    if (Number.isFinite(lastAttempt) && now - lastAttempt < recoveryCooldownMs()) continue
+
+    const project = task.projectId ? getProject(task.projectId) : null
+    if (!project) continue
+    if (countActiveCeoAgents(project.projectId) >= ceoCap()) {
+      addEvent("task.stale_continue_deferred", `Task ${task.taskId} continuation deferred: CEO cap reached`, {
+        taskId: task.taskId,
+        agentId: ceo.id,
+        cap: ceoCap(),
+      })
+      continue
+    }
+
+    // Spend the budget before the spawn so a repeated failure cannot loop with
+    // a fresh counter on every tick.
+    recordRecovery(task.taskId, new Date(now).toISOString())
+    try {
+      const resumed = await resumeAgentCore(ceo, project)
+      continued += 1
+      const updated = Date.parse(task.updatedAt)
+      addEvent("task.stale_continued", `Task ${task.taskId} CEO ${ceo.id} resumed for stale continuation`, {
+        taskId: task.taskId,
+        agentId: ceo.id,
+        status: task.status,
+        ageMs: Number.isFinite(updated) ? now - updated : null,
+      })
+      try {
+        await promptAgentCore(
+          resumed,
+          `Continue stale task ${task.taskId} ("${task.title}"). It is still ${task.status}; either finish it and run \`kb tasks update ${task.taskId} --status done --note "<one-line result>"\`, or report exactly what blocks it. Do not pick up unrelated work.`,
+        )
+      } catch {
+        // Not ready yet or busy — queued messages and the nudger pick it up.
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      addEvent("task.stale_continue_failed", `Task ${task.taskId} stale continuation failed: ${message}`, {
+        taskId: task.taskId,
+        agentId: ceo.id,
+        message,
+      })
+    }
+  }
+  return { continued, blocked }
 }
 
 /**
