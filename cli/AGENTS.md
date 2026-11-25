@@ -11,7 +11,8 @@
 
 ## Local Contracts
 
-- Daemon-owned operations go over the local Unix socket (JSON-RPC 2.0); the contract is `../docs/kbots-ipc.md`. The CLI is a client, not a bypass.
+- Daemon-owned operations go over the shared `kbots-ipc` transport (JSON-RPC 2.0): Unix socket on Unix, authenticated TCP on Windows/remote. The contract is `../docs/kbots-ipc.md`. The CLI is a client, not a bypass.
+- `daemon start|stop|status` and `connect --host|--local` are local process/config commands: they manage a detached daemon pid file and saved host in the shared state dir. They never bypass daemon-side authorization.
 - `project add`, `project configure`, and `project sync` are local/direct OpenCode operations; everything else (tasks, agents, approvals) is daemon-owned.
 - `project add` / `project configure` adopt a project that already ships per-role `opencode.jsonc`: the manifest `.agents/bot/kbots.json` is derived from those configs (JSONC-aware, `$schema` dropped, roles without a config get defaults) and the config files stay byte-identical unless `--overwrite`. The scaffold stamp `.agents/bot/.scaffold.json` is machine-local and self-ignored via `.agents/bot/.gitignore`.
 - `project configure` expands `bots.<role>.opencode.mcp.disable` into `mcp.servers.<name>.disabled` entries by copying the definition from the global OpenCode config (`type`, `command`, `cwd`, `url`, `timeout` only — never `environment`, `headers`, or `oauth`). Keep it that way: a tracked project config must not carry secrets.
@@ -30,7 +31,7 @@
 ## Verification
 
 - `cargo check` (or `cargo build`) in this directory.
-- `./install.sh` from the repo root builds and installs the CLI alongside the other clients and deploys the daemon on non-Nix hosts; on Nix-managed hosts the flake package provides `kbots` and the `kb` alias, and `kbdeploy "what changed"` is the one deploy command (`nix build .#` is the packaging check).
+- `./install.sh` from the repo root builds and installs the CLI alongside the other clients and deploys the daemon on Unix hosts; `powershell -ExecutionPolicy Bypass -File .\install.ps1` does the same per-user on Windows (no WSL, no admin); on Nix-managed hosts the flake package provides `kbots` and the `kb` alias, and `kbdeploy "what changed"` is the one deploy command (`nix build .#` is the packaging check).
 
 ## Child DOX Index
 

@@ -1,54 +1,23 @@
-//! Minimal JSON-RPC 2.0 client for the kbots daemon, speaking
-//! newline-delimited JSON over a Unix domain socket.
+//! Minimal JSON-RPC 2.0 client for the kbots daemon. Transport (Unix socket
+//! or authenticated TCP) lives in the shared `kbots-ipc` crate so CLI, TUI and
+//! GUI discover the same daemon and agree on the auth token.
 //!
-//! One request per connection (the v1 protocol): write a single line, read a
-//! single response line. Read and write timeouts are ~10 s so a wedged
-//! daemon can never freeze the UI for longer than that.
+//! One request per connection: write a single line, read a single response
+//! line. Timeouts are owned by the shared transport (~10 s).
 
-use std::env;
 use std::fmt;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
+use kbots_ipc as ipc;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-const IO_TIMEOUT: Duration = Duration::from_secs(10);
-const MAX_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
-
-static NEXT_ID: AtomicU64 = AtomicU64::new(1);
-
-/// Socket candidates in the contract's discovery order:
-/// `KBOTS_SOCKET` → `$XDG_RUNTIME_DIR/kbots.sock` → `$HOME/.local/run/kbots.sock`.
-/// An explicit `KBOTS_SOCKET` means exactly that one path; otherwise the
-/// client falls back to the next candidate when a connect fails (a sandbox
-/// may deny /run/user/* while $HOME works).
-pub fn socket_candidates() -> Vec<PathBuf> {
-    if let Ok(explicit) = env::var("KBOTS_SOCKET") {
-        let trimmed = explicit.trim();
-        if !trimmed.is_empty() {
-            return vec![PathBuf::from(trimmed)];
-        }
+fn convert(error: ipc::RpcError) -> RpcError {
+    match error {
+        ipc::RpcError::Connect(message) => RpcError::Connect(message),
+        ipc::RpcError::Transport(message) => RpcError::Transport(message),
+        ipc::RpcError::Parse(message) => RpcError::Parse(message),
+        ipc::RpcError::Method { code, message } => RpcError::Method { code, message },
     }
-    let mut candidates = Vec::new();
-    if let Some(xdg) = env::var("XDG_RUNTIME_DIR")
-        .ok()
-        .map(|dir| PathBuf::from(dir).join("kbots.sock"))
-        .filter(|path| !path.as_os_str().is_empty())
-    {
-        candidates.push(xdg);
-    }
-    if let Some(home) = env::var("HOME")
-        .ok()
-        .map(|dir| PathBuf::from(dir).join(".local/run/kbots.sock"))
-        && !candidates.contains(&home)
-    {
-        candidates.push(home);
-    }
-    candidates
 }
 
 #[derive(Debug)]
@@ -99,96 +68,19 @@ impl fmt::Display for RpcError {
 
 #[derive(Clone)]
 pub struct RpcClient {
-    socket_candidates: Vec<PathBuf>,
+    endpoints: Vec<ipc::Endpoint>,
 }
 
 impl RpcClient {
     pub fn new() -> Self {
-        let candidates = socket_candidates();
-        let candidates = if candidates.is_empty() {
-            vec![PathBuf::from("kbots.sock")]
-        } else {
-            candidates
-        };
         Self {
-            socket_candidates: candidates,
+            endpoints: ipc::endpoints(None, None),
         }
     }
 
     /// Fire a single method call and return the raw `result` value.
     pub fn call(&self, method: &str, params: Value) -> Result<Value, RpcError> {
-        self.call_with_timeout(method, params, IO_TIMEOUT)
-    }
-
-    fn call_with_timeout(
-        &self,
-        method: &str,
-        params: Value,
-        timeout: Duration,
-    ) -> Result<Value, RpcError> {
-        let mut stream = None;
-        let mut connect_errors = Vec::with_capacity(self.socket_candidates.len());
-        for candidate in &self.socket_candidates {
-            match UnixStream::connect(candidate) {
-                Ok(connected) => {
-                    stream = Some(connected);
-                    break;
-                }
-                Err(error) => {
-                    connect_errors.push(format!("{} ({error})", candidate.display()));
-                }
-            }
-        }
-        let mut stream = stream.ok_or_else(|| {
-            RpcError::Connect(format!(
-                "cannot reach daemon socket (tried: {})",
-                connect_errors.join("; ")
-            ))
-        })?;
-        stream
-            .set_read_timeout(Some(timeout))
-            .map_err(|error| RpcError::Transport(error.to_string()))?;
-        stream
-            .set_write_timeout(Some(timeout))
-            .map_err(|error| RpcError::Transport(error.to_string()))?;
-
-        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        let request = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        });
-        let mut payload = request.to_string();
-        payload.push('\n');
-        stream
-            .write_all(payload.as_bytes())
-            .map_err(|error| RpcError::Transport(error.to_string()))?;
-
-        let limited = stream.take(MAX_RESPONSE_BYTES);
-        let mut line = String::new();
-        BufReader::new(limited)
-            .read_line(&mut line)
-            .map_err(|error| RpcError::Transport(error.to_string()))?;
-        if line.trim().is_empty() {
-            return Err(RpcError::Parse("empty response line".into()));
-        }
-        let response: Value = serde_json::from_str(line.trim())
-            .map_err(|error| RpcError::Parse(error.to_string()))?;
-
-        if let Some(error) = response.get("error") {
-            let code = error.get("code").and_then(Value::as_i64).unwrap_or(0);
-            let message = error
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown error")
-                .to_string();
-            return Err(RpcError::Method { code, message });
-        }
-        response
-            .get("result")
-            .cloned()
-            .ok_or_else(|| RpcError::Parse("response carries neither result nor error".into()))
+        ipc::call(&self.endpoints, method, params).map_err(convert)
     }
 
     fn call_typed<T: serde::de::DeserializeOwned>(

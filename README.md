@@ -32,6 +32,40 @@ point is in `cli/` and uses the v1 JSON-RPC socket contract.
 
 ## Install
 
+### Windows (native, no WSL or admin rights)
+
+Install [Bun](https://bun.sh) and Rust via Scoop (`scoop install bun rustup
+mingw`), then from this checkout run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+It type-checks the backend, builds all three Rust clients, installs `kbots.exe`,
+`kbots-tui.exe`, `kbots-gui.exe` and a `kb` shim into
+`%LOCALAPPDATA%\kbots\bin`, adds that folder to the per-user PATH, records the
+repo root for the background daemon, adds a Start Menu shortcut, and starts the
+daemon. `-NoDaemon`, `-NoPath`, `-Autostart` and `-InstallDir PATH` adjust those
+steps. Nothing writes to system directories or needs elevation.
+
+Windows clients and the daemon speak authenticated TCP on `127.0.0.1:7878`
+(the port is configurable with `--tcp HOST:PORT` on the daemon and `--host` on
+clients). To control an existing Linux daemon over Tailscale instead of running
+one locally:
+
+```powershell
+kbots connect --host 100.x.x.x:7878   # set KBOTS_TOKEN if the daemon's token file is not readable
+kb status
+kb tui --full
+kbots connect --local                 # back to the local daemon
+```
+
+The TUI's embedded Codex terminal is owned by Herdr Core; on Windows set
+`HC_SOCKET=tcp://HOST:PORT` if `hc` is reachable over TCP, otherwise use
+`kb tui --full` for the dashboard without the embedded terminal.
+
+### Unix (Nix or the shell installer)
+
 With Nix (flake + Home Manager), all clients and the daemon come from the
 store:
 

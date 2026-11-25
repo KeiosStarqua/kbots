@@ -2,8 +2,9 @@
  * kbots workflow daemon (v1, minimal).
  *
  * Owns workflow state through SQLite and exposes the local JSON-RPC 2.0
- * contract from docs/kbots-ipc.md over a Unix domain socket. One newline-
- * delimited request per connection; one newline-delimited response.
+ * contract from docs/kbots-ipc.md over a Unix domain socket (Unix hosts) and
+ * an authenticated TCP listener (Windows hosts, or `--tcp` / KBOTS_TCP on
+ * Unix). One newline-delimited request per connection; one response.
  *
  * v2 scope: task records with auto-dispatch to per-task OpenCode CEO
  * sessions, project registry, approvals log, event log, and managed agent
@@ -17,11 +18,14 @@
  * $HOME/.local/run/kbots.sock so sandboxed agents (whose AF_UNIX connect to
  * /run/user/* is denied) can reach it through the fallback path. The
  * secondary listener is skipped when another daemon already serves it.
+ * TCP defaults to 127.0.0.1:7878 on Windows; `--tcp HOST:PORT` (or
+ * KBOTS_TCP) enables it on Unix too for remote/Tailscale clients.
  */
 import { chmod, mkdir, unlink } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { connect, createServer, type Server, type Socket } from "node:net"
+import { Effect } from "effect"
 
 import { RpcError } from "./errors.ts"
 import { registerProjectHandler, listProjectsHandler, getProjectHandler } from "./orchestrator/projects.ts"
@@ -57,6 +61,7 @@ import {
 } from "./orchestrator/watchers.ts"
 import { startNudgeLoop } from "./orchestrator/nudger.ts"
 import { startMaintenanceLoop } from "./orchestrator/maintenance.ts"
+import { authorized, DEFAULT_TCP_ADDR, ensureToken, tcpAddress } from "./adapters/transport.ts"
 
 const MAX_REQUEST_BYTES = 1024 * 1024
 const SOCKET_TIMEOUT_MS = 10_000
@@ -71,7 +76,7 @@ const MAX_CONCURRENT_CONNECTIONS = (() => {
 let activeConnections = 0
 let lastBusyLogAt = 0
 
-function acceptConnection(socket: Socket, handlers: Record<string, Handler>): void {
+function acceptConnection(socket: Socket, handlers: Record<string, Handler>, authToken: string | null): void {
   if (activeConnections >= MAX_CONCURRENT_CONNECTIONS) {
     writeJson(socket, rpcError(null, -32000, "server busy: too many concurrent connections"))
     const now = Date.now()
@@ -85,19 +90,37 @@ function acceptConnection(socket: Socket, handlers: Record<string, Handler>): vo
   socket.once("close", () => {
     activeConnections -= 1
   })
-  void handleConnection(socket, handlers)
+  void handleConnection(socket, handlers, authToken)
 }
 
 type Handler = (params: Record<string, unknown>) => Promise<unknown>
 
 const startedAt = Date.now()
 
-function parseArgs(argv: string[]): { socket?: string } {
+function parseArgs(argv: string[]): { socket?: string; tcp?: string } {
+  const result: { socket?: string; tcp?: string } = {}
   const index = argv.indexOf("--socket")
-  if (index === -1) return {}
-  const value = argv[index + 1]
-  if (!value) throw new Error("--socket requires a path")
-  return { socket: value }
+  if (index !== -1) {
+    const value = argv[index + 1]
+    if (!value || value.startsWith("--")) throw new Error("--socket requires a path")
+    result.socket = value
+  }
+  const equals = argv.find((arg) => arg.startsWith("--socket="))
+  if (equals) result.socket = equals.slice("--socket=".length)
+  for (const flag of ["--tcp", "--host"]) {
+    const at = argv.indexOf(flag)
+    if (at !== -1) {
+      const value = argv[at + 1]
+      result.tcp = value && !value.startsWith("--") ? value : ""
+      break
+    }
+    const withEquals = argv.find((arg) => arg.startsWith(`${flag}=`))
+    if (withEquals) {
+      result.tcp = withEquals.slice(flag.length + 1)
+      break
+    }
+  }
+  return result
 }
 
 function socketPath(override?: string): string {
@@ -132,9 +155,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-function buildHandlers(socket: string, secondarySocket?: string): Record<string, Handler> {
+function buildHandlers(socket: string, secondarySocket?: string, tcp?: string): Record<string, Handler> {
   return {
-    "system.status": () => systemStatusHandler({ socketPath: socket, secondarySocketPath: secondarySocket, startedAt }),
+    "system.status": () => systemStatusHandler({ socketPath: socket, secondarySocketPath: secondarySocket, tcpAddress: tcp, startedAt }),
     "tasks.create": createTaskHandler,
     "tasks.list": listTasksHandler,
     "tasks.get": getTaskHandler,
@@ -171,7 +194,7 @@ function rpcError(id: unknown, code: number, message: string): Record<string, un
   return { jsonrpc: "2.0", id: id ?? null, error: { code, message } }
 }
 
-async function handleConnection(socket: Socket, handlers: Record<string, Handler>): Promise<void> {
+async function handleConnection(socket: Socket, handlers: Record<string, Handler>, authToken: string | null): Promise<void> {
   socket.setTimeout(SOCKET_TIMEOUT_MS, () => socket.destroy())
   const chunks: Buffer[] = []
   let received = 0
@@ -199,6 +222,9 @@ async function handleConnection(socket: Socket, handlers: Record<string, Handler
           throw new RpcError(-32600, "invalid JSON-RPC 2.0 request")
         }
         id = request.id ?? null
+        if (authToken !== null && !authorized(request.token, authToken)) {
+          throw new RpcError(-32001, "unauthorized: missing or invalid daemon token (set KBOTS_TOKEN)")
+        }
         const method = request.method
         if (typeof method !== "string" || method.length === 0) {
           throw new RpcError(-32600, "invalid JSON-RPC method")
@@ -238,6 +264,7 @@ async function handleConnection(socket: Socket, handlers: Record<string, Handler
 async function bindSecondary(
   path: string,
   handlers: Record<string, Handler>,
+  authToken: string | null,
 ): Promise<Server | null> {
   try {
     if (await socketInUse(path)) {
@@ -247,7 +274,7 @@ async function bindSecondary(
     await mkdir(dirname(path), { recursive: true, mode: 0o700 })
     await unlink(path).catch(() => {})
     const server = createServer((socket) => {
-      acceptConnection(socket, handlers)
+      acceptConnection(socket, handlers, authToken)
     })
     await new Promise<void>((resolvePromise, rejectPromise) => {
       server.once("error", rejectPromise)
@@ -264,41 +291,65 @@ async function bindSecondary(
 }
 
 async function main(): Promise<void> {
-  const { socket: override } = parseArgs(process.argv.slice(2))
-  const path = socketPath(override)
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 })
-  await unlink(path).catch(() => {})
+  const args = parseArgs(process.argv.slice(2))
+  const isWindows = process.platform === "win32"
+  // Windows has no AF_UNIX daemon transport, so TCP is always on there.
+  const tcp = tcpAddress(args.tcp) ?? (isWindows ? DEFAULT_TCP_ADDR : null)
+  const authToken = tcp ? await Effect.runPromise(ensureToken) : null
+  // Windows reports its TCP endpoint as the primary address; Unix keeps the
+  // legacy AF_UNIX listeners. Windows never binds an AF_UNIX path.
+  const path = isWindows ? (tcp ?? DEFAULT_TCP_ADDR) : socketPath(args.socket)
+  const bindUnix = !isWindows
+  if (bindUnix) {
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+    await unlink(path).catch(() => {})
+  }
 
-  const secondary = fallbackSocketPath(override, path)
-  const handlers = buildHandlers(path, secondary ?? undefined)
-  const server = createServer((socket) => {
-    acceptConnection(socket, handlers)
-  })
+  const secondary = bindUnix ? fallbackSocketPath(args.socket, path) : null
+  const handlers = buildHandlers(path, secondary ?? undefined, tcp ?? undefined)
+  const accept = (socket: Socket) => acceptConnection(socket, handlers, authToken)
+  let unixServer: Server | null = null
+  if (bindUnix) unixServer = createServer(accept)
+  let tcpServer: Server | null = null
+  if (tcp) tcpServer = createServer(accept)
 
   let secondaryServer: Server | null = null
+  const servers = [unixServer, tcpServer].filter((server): server is Server => server !== null)
   const shutdown = () => {
     stopWatcher()
     stopNudge()
     stopMaintenance()
     secondaryServer?.close()
-    server.close(() => {
-      const removals = [unlink(path).catch(() => {})]
-      if (secondaryServer) removals.push(unlink(secondary!).catch(() => {}))
-      void Promise.all(removals).finally(() => process.exit(0))
-    })
-    setTimeout(() => process.exit(0), 2_000).unref()
+    for (const server of servers) server.close()
+    if (bindUnix) void unlink(path).catch(() => {})
+    if (secondary) void unlink(secondary).catch(() => {})
+    setTimeout(() => process.exit(0), 500).unref()
   }
   process.on("SIGINT", shutdown)
   process.on("SIGTERM", shutdown)
 
-  secondaryServer = secondary ? await bindSecondary(secondary, handlers) : null
+  if (secondary) secondaryServer = await bindSecondary(secondary, handlers, authToken)
 
-  await new Promise<void>((resolvePromise, rejectPromise) => {
-    server.once("error", rejectPromise)
-    server.listen(path, resolvePromise)
-  })
-  await chmod(path, 0o600)
-  console.error(`${DAEMON_NAME}: listening on ${path}`)
+  if (unixServer) {
+    await new Promise<void>((resolvePromise, rejectPromise) => {
+      unixServer!.once("error", rejectPromise)
+      unixServer!.listen(path, resolvePromise)
+    })
+    await chmod(path, 0o600)
+    console.error(`${DAEMON_NAME}: listening on ${path}`)
+  }
+  if (tcpServer && tcp) {
+    const [host, portText] = tcp.split(/:(?=[^:]*$)/)
+    const port = Number.parseInt(portText ?? "", 10)
+    if (!host || !Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error(`invalid TCP address: ${tcp} (expected HOST:PORT)`)
+    }
+    await new Promise<void>((resolvePromise, rejectPromise) => {
+      tcpServer!.once("error", rejectPromise)
+      tcpServer!.listen(port, host, resolvePromise)
+    })
+    console.error(`${DAEMON_NAME}: listening on tcp://${tcp}`)
+  }
   const stopWatcher = startWatcherLoop()
   const stopNudge = startNudgeLoop()
   // Periodic reconcile + reap of finished CEO terminals (KBOTS_REAP=off,
@@ -314,6 +365,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  console.error(`kbots-daemon: ${error instanceof Error ? error.message : String(error)}`)
+  const detail = error instanceof Error ? (error.stack ?? error.message) : String(error)
+  console.error(`kbots-daemon: ${detail}`)
   process.exit(1)
 })

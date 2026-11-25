@@ -1,25 +1,32 @@
 # kbots local IPC contract
 
 The Bun daemon owns workflow state and side effects. GUI, TUI, and CLI are
-clients. The initial transport contract is one newline-delimited JSON-RPC 2.0
-request and response per Unix domain socket connection. The daemon is
-implemented (v1 minimal) and runs as the `kbots-daemon` systemd user service
-after `./install.sh` (opt out with `KBOTS_SKIP_DAEMON_UNIT=1`) or the Nix Home
-Manager module (`services.kbots.enable`), or manually
-with `bun run daemon` (equivalently `bun run src/backend/daemon.ts`) without
-systemd.
+clients. The contract is one newline-delimited JSON-RPC 2.0 request and
+response per connection, over either a Unix domain socket (Unix hosts) or an
+authenticated TCP listener (Windows hosts, and Unix hosts that opt in for
+remote access). The transport is shared by all three clients in the Rust crate
+`ipc/` (`kbots-ipc`), so they never disagree about discovery or auth.
 
-The daemon listens on two Unix domain sockets by default — the primary plus a
-sandbox-reachable fallback — and clients try them in the discovery order:
+On Unix hosts the daemon runs as the `kbots-daemon` systemd user service after
+`./install.sh` (opt out with `KBOTS_SKIP_DAEMON_UNIT=1`) or the Nix Home
+Manager module (`services.kbots.enable`), or manually with `bun run daemon`
+(equivalently `bun run src/backend/daemon.ts`). On Windows,
+`./install.ps1` installs portable per-user shims and `kbots daemon start`
+spawns the daemon as a detached background process (no service, no admin).
 
-1. `--socket PATH` (CLI/GUI) / `KBOTS_SOCKET` (all clients)
-2. `$XDG_RUNTIME_DIR/kbots.sock`
-3. `$HOME/.local/run/kbots.sock`
+Unix hosts bind two sockets by default — the primary plus a sandbox-reachable
+fallback — and clients try them in this discovery order:
 
-An explicit `--socket`/`KBOTS_SOCKET` means exactly that one path. Otherwise a
-client falls back to the next candidate when a connect fails, not only when a
-socket is missing — a sandbox (Landlock/seccomp, container) may deny `connect()`
-to `/run/user/*` with `EPERM` while `$HOME` works.
+1. `--host HOST:PORT` (CLI/GUI) / `KBOTS_HOST` / `KBOTS_TCP` (all clients)
+2. `--socket PATH` (CLI/GUI) / `KBOTS_SOCKET` (all clients)
+3. `$XDG_RUNTIME_DIR/kbots.sock`
+4. `$HOME/.local/run/kbots.sock`
+
+An explicit `--socket`/`KBOTS_SOCKET` or `--host`/`KBOTS_HOST` means exactly
+that one endpoint. Otherwise a client falls back to the next candidate when a
+connect fails, not only when a socket is missing — a sandbox (Landlock/seccomp,
+container) may deny `connect()` to `/run/user/*` with `EPERM` while `$HOME`
+works.
 
 The daemon binds the primary socket from the discovery order. When that lands
 in `$XDG_RUNTIME_DIR` and neither `--socket` nor `KBOTS_SOCKET` is set, it also
@@ -27,6 +34,23 @@ binds a secondary listener on `$HOME/.local/run/kbots.sock` (mode `0600`,
 unlinked on SIGINT/SIGTERM, skipped without stealing if another daemon already
 serves it, and never fatal to the daemon if it fails). Sandboxed agents that
 cannot reach `/run/user/*` connect through the fallback path instead.
+
+### TCP transport and authentication
+
+`--tcp HOST:PORT` on the daemon (or `KBOTS_TCP=1` for `127.0.0.1:7878`) adds
+a TCP listener; Windows always binds TCP and does not bind AF_UNIX sockets.
+Clients reach it via `--host`, `KBOTS_HOST`, or a host saved with
+`kbots connect --host 100.x.x.x:7878` (clear with `kbots connect --local`).
+Remote access over a private network (e.g. Tailscale) uses the same protocol.
+
+TCP requests carry a top-level `token` field. The daemon generates a 32-byte
+hex secret at `$HOME/.local/state/kbots/token` on first TCP start (mode `0600`
+on Unix; inside the user profile on Windows). Clients read that file, or take
+`KBOTS_TOKEN` / `--token` when the file is not shared with the daemon's user.
+Unix socket connections are unchanged (protected by the socket file mode) and
+do not require a token. A TCP request without a valid token gets JSON-RPC
+`-32001 unauthorized`. `system.status` reports `daemon.tcpAddress` when TCP
+is bound.
 
 Connections beyond `KBOTS_MAX_CONNECTIONS` (default `256`) are rejected with a
 JSON-RPC `-32000` `server busy` error instead of queueing unboundedly. SQLite

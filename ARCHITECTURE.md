@@ -30,7 +30,7 @@ contract is documented but still needs its owning backend implementation.
                     └──────────────┬────────────────┘
                                    │ project setup / session start
                                    ▼
-┌────────────────┐      Unix socket      ┌──────────────────────────────┐
+┌────────────────┐  Unix socket / TCP    ┌──────────────────────────────┐
 │ Rust CLI       │ ─ ─ JSON-RPC 2.0 ─ ─▶│ Bun workflow daemon          │
 │ Slint GUI      │                       │ (v1 minimal)                  │
 │ Ratatui TUI    │                       │ orchestrator, workflows, DB, │
@@ -47,10 +47,11 @@ Separate utility path: `smoke` embeds an OpenCode host through `@opencode/sdk`.
 It is not the workflow daemon and does not serve the clients.
 ```
 
-The socket path is the local interface served by the v1 daemon. Until it is
-running, daemon-oriented CLI calls fail with a socket connection error.
-`project configure` and `sessions start` are local/direct OpenCode operations
-and work without that daemon.
+The daemon interface is a Unix socket on Unix hosts and authenticated TCP on
+Windows (`127.0.0.1:7878`) or with `--tcp`/`KBOTS_TCP`; the Rust clients share
+discovery/auth through `ipc/`. Until the daemon is running, daemon-oriented CLI
+calls fail with a connection error. `project configure` and `sessions start`
+are local/direct OpenCode operations and work without that daemon.
 
 ## Repository ownership
 
@@ -63,12 +64,14 @@ and work without that daemon.
 | `src/backend/bots/` | agents.list implemented (incl. managed `agents.start/show/stop/prompt/interrupt` lifecycle: exact session binding, terminal+headless modes, SQLite registry, boot reconciliation); CEO planning/review, GIT and OPS work contracts, coding worker policies | Lifecycle implemented; work contracts still planned |
 | `src/backend/adapters/` | Herdr adapter (read-only `hc ls`) implemented; Git and optional agmsg integrations | Herdr implemented; Git/agmsg planned |
 | `src/backend/db/` | SQLite schema, migrations, repositories, transaction boundaries | Implemented minimal persistence (WAL) |
-| `src/backend/daemon.ts` | Bun daemon entry point: newline-delimited JSON-RPC over a Unix domain socket, SQLite-backed | Implemented (v1 minimal); deployed as the `kbots-daemon` systemd user service by install.sh (opt out with `KBOTS_SKIP_DAEMON_UNIT=1`) |
-| `cli/` | Rust `kbots` automation client, local project scaffolding/configuration, UI launch | Implemented |
+| `src/backend/daemon.ts` | Bun daemon entry point: newline-delimited JSON-RPC over Unix sockets (Unix) or authenticated TCP (Windows/remote), SQLite-backed; `adapters/transport.ts` owns the TCP address and token | Implemented (v1 minimal); systemd user service by install.sh on Unix, detached process via `kbots daemon start` on Windows |
+| `ipc/` | Rust `kbots-ipc`: shared endpoint discovery, Unix/TCP streams, token auth, JSON-RPC framing | Implemented; consumed by CLI, GUI and TUI |
+| `cli/` | Rust `kbots` automation client, local project scaffolding/configuration, UI launch, daemon lifecycle, remote-host config | Implemented |
 | `gui/` | Native Slint operator client | UI and RPC calls implemented; connects to the v1 daemon |
 | `tui/control-center/` | Native Ratatui dashboard; v1+v2 daemon client (live tasks/agents/approvals/events, task composer, `/brief`, `/inbox`) | Implemented; connects to the daemon |
 | `docs/` | Detailed OpenCode and IPC operational contracts | Implemented documentation |
-| `install.sh` | Frozen Bun install, TypeScript check, Rust builds, binary and desktop launcher install | Implemented |
+| `install.sh` | Frozen Bun install, TypeScript check, Rust builds, binary and desktop launcher install (Unix) | Implemented |
+| `install.ps1` | Native Windows per-user install: frozen Bun install, TypeScript check, Rust builds, PATH/Start Menu/daemon setup; no WSL or admin | Implemented |
 
 Each backend module has a local README describing its ownership. When those
 modules are implemented, keep policy in the orchestrator/workflow layers and
@@ -150,17 +153,21 @@ of three paths:
 - **Direct OpenCode session start:** `sessions start` launches the Bun
   `start-sessions.ts` script and does not need a daemon.
 - **Daemon RPC:** status, tasks, agents, project registration/list/show, and
-  approvals are encoded as a single JSON-RPC request and sent to the Unix
-  socket. `project add` performs local scaffold preparation first, then sends
-  the registration request. Responses are printed as JSON when stdout is not a
-  TTY (or `--json` is passed); on a terminal, the CLI renders human-readable
-  tables and summaries instead. Socket operations
-  use 15-second read/write timeouts and validate the JSON-RPC version and ID.
+  approvals are encoded as a single JSON-RPC request and sent through
+  `kbots-ipc`. `project add` performs local scaffold preparation first, then
+  sends the registration request. Responses are printed as JSON when stdout is
+  not a TTY (or `--json` is passed); on a terminal, the CLI renders
+  human-readable tables and summaries instead. Transport operations use
+  10-second read/write timeouts and validate the JSON-RPC version and ID.
+- **Daemon lifecycle / remote config (local):** `daemon start|stop|status`
+  manages a detached process through a pid file; `connect --host`/`--local`
+  saves or clears a remote endpoint. Neither path bypasses daemon RPC.
 
 `kbots gui` and `kbots tui` launch the installed UI binaries. `KBOTS_GUI_BIN`
-and `KBOTS_TUI_BIN` can override their paths. Global socket selection is
-`--socket PATH`, then `KBOTS_SOCKET`, then `$XDG_RUNTIME_DIR/kbots.sock`, then
-`$HOME/.local/run/kbots.sock`.
+and `KBOTS_TUI_BIN` can override their paths. Endpoint selection is
+`--host`/`KBOTS_HOST`, then `--socket`/`KBOTS_SOCKET`, then a saved remote host,
+then `$XDG_RUNTIME_DIR/kbots.sock` → `$HOME/.local/run/kbots.sock` on Unix or
+`127.0.0.1:7878` on Windows.
 
 ### GUI and TUI
 
@@ -188,8 +195,8 @@ The daemon continues working if a UI disconnects or exits.
 The daemon is the single owner of mutable workflow state and side effects.
 GUI, TUI, and CLI are clients. The transport contract in
 `docs/kbots-ipc.md` is one newline-delimited JSON-RPC 2.0 request and response
-per Unix domain socket connection. The CLI's socket lookup order is documented
-above. The v1 RPC surface includes:
+per Unix socket or authenticated TCP connection. The CLI's endpoint lookup
+order is documented above. The v1 RPC surface includes:
 
 | Method | Purpose |
 | --- | --- |
@@ -257,10 +264,12 @@ remain unimplemented in the current tree.
 | `OPENCODE_MODEL` | Smoke check | `provider/model`; defaults to `opencode/inkling-2-small-free` |
 | `OPENCODE_DB_PATH` | Smoke check | Override OpenCode CLI database path |
 | `KBOTS_CEO_CAP` | Daemon | Per-project active-CEO dispatch cap; defaults to 4 |
-| `KBOTS_SOCKET` | CLI and GUI | Overrides the default daemon socket |
-| `XDG_RUNTIME_DIR` | CLI and GUI | Supplies the default socket parent directory |
+| `KBOTS_SOCKET` | CLI, GUI, TUI | Overrides the default daemon Unix socket |
+| `KBOTS_HOST`, `KBOTS_TCP` | CLI, GUI, TUI, daemon | TCP endpoint (`HOST:PORT`); `KBOTS_TCP=1` uses the default, and the daemon binds it |
+| `KBOTS_TOKEN` | CLI, GUI, TUI | TCP auth token; defaults to `$HOME/.local/state/kbots/token` |
+| `XDG_RUNTIME_DIR` | CLI, GUI, TUI | Supplies the default socket parent directory |
 | `XDG_STATE_HOME` | Session startup; daemon | Supplies the root for saved session IDs and the daemon SQLite database |
-| `KBOTS_INSTALL_DIR` | Installer | Defaults to `$HOME/.local/bin` |
+| `KBOTS_INSTALL_DIR` | Installer | Defaults to `$HOME/.local/bin` (install.sh) or `%LOCALAPPDATA%\kbots\bin` (install.ps1) |
 | `KBOTS_GUI_BIN`, `KBOTS_TUI_BIN` | CLI | Override the installed UI executable paths |
 
 Session IDs are local state, not credentials. Provider secrets stay managed by
@@ -270,12 +279,16 @@ inside each project checkout.
 ## Build and change guide
 
 The repository has two build ecosystems: Bun/TypeScript for the backend and
-Cargo for the Rust clients. On non-Nix hosts, `./install.sh` installs frozen
-Bun dependencies, runs `bun run tsc --noEmit`, builds the GUI, TUI, and CLI in
-release mode, installs their binaries, writes the desktop launcher, and
-installs and restarts the `kbots-daemon` systemd user service from
-`deploy/kbots-daemon.service` (opt out with `KBOTS_SKIP_DAEMON_UNIT=1`). On
-Nix-managed hosts, `kbdeploy "what changed"` is the one deploy command;
+Cargo for the Rust clients plus the shared `ipc/` crate. On Unix hosts,
+`./install.sh` installs frozen Bun dependencies, runs `bun run tsc --noEmit`,
+builds the GUI, TUI, and CLI in release mode, installs their binaries, writes
+the desktop launcher, and installs and restarts the `kbots-daemon` systemd user
+service from `deploy/kbots-daemon.service` (opt out with
+`KBOTS_SKIP_DAEMON_UNIT=1`). On Windows,
+`powershell -ExecutionPolicy Bypass -File .\install.ps1` performs the same
+builds per-user, updates the user PATH, and starts a detached TCP daemon with
+no service or admin rights. On Nix-managed hosts,
+`kbdeploy "what changed"` is the one deploy command;
 `nix build .#` is the packaging check and `nix develop` provides the toolchain.
 After every application code change, clients and the daemon must always run
 freshly deployed code. See `docs/deployment.md`.

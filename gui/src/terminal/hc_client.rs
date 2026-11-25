@@ -1,9 +1,8 @@
+use kbots_ipc::Stream;
 use serde_json::{Value, json};
 use std::{
     env,
-    io::{BufRead, BufReader, Read, Write},
-    os::fd::AsRawFd,
-    os::unix::net::UnixStream,
+    io::{BufRead, BufReader, ErrorKind, Read, Write},
     path::PathBuf,
     sync::{Arc, Mutex, mpsc},
     thread,
@@ -19,6 +18,8 @@ const RESIZE: u8 = 3;
 const FOCUS: u8 = 4;
 const FACTS: u8 = 5;
 const MAX_FRAME: usize = 16 * 1024 * 1024;
+/// Internal sentinel: no frame within the 20 ms read window.
+const READ_TIMEOUT: &str = "herdr read timeout";
 
 #[derive(Clone, Debug)]
 pub struct TerminalInfo {
@@ -30,7 +31,7 @@ pub struct TerminalInfo {
 }
 
 pub struct HcClient {
-    writer: Arc<Mutex<UnixStream>>,
+    writer: Arc<Mutex<Stream>>,
     next_id: u64,
     stream_commands: Option<mpsc::Sender<StreamCommand>>,
     observe: bool,
@@ -38,8 +39,8 @@ pub struct HcClient {
 
 impl HcClient {
     pub fn connect() -> Result<Self, String> {
-        let path = socket_path();
-        let mut stream = UnixStream::connect(&path).map_err(|error| {
+        let path = socket_path()?;
+        let mut stream = Stream::connect_unix_or_host(&path).map_err(|error| {
             format!(
                 "Cannot connect to Herdr Core at {}: {error}",
                 path.display()
@@ -62,7 +63,6 @@ impl HcClient {
             return Err("Herdr Core did not enable framed streaming on this connection".into());
         }
         let writer = stream.try_clone().map_err(|e| e.to_string())?;
-        stream.set_read_timeout(None).map_err(|e| e.to_string())?;
         Ok(Self {
             writer: Arc::new(Mutex::new(writer)),
             next_id: 2,
@@ -158,24 +158,10 @@ impl HcClient {
                     address: address.clone(),
                     channel,
                 });
+                // A short read timeout replaces libc::poll(): it behaves the
+                // same on Unix and works on Windows, where AF_UNIX does not.
+                let _ = reader.set_read_timeout(Some(Duration::from_millis(20)));
                 loop {
-                    let mut poll_fd = libc::pollfd {
-                        fd: reader.as_raw_fd(),
-                        events: libc::POLLIN,
-                        revents: 0,
-                    };
-                    let ready = unsafe { libc::poll(&mut poll_fd, 1, 20) };
-                    if ready < 0 {
-                        let error = std::io::Error::last_os_error();
-                        if error.kind() != std::io::ErrorKind::Interrupted {
-                            let _ = events.send(TerminalEvent::Error {
-                                address: address.clone(),
-                                channel,
-                                message: format!("Herdr stream poll failed: {error}"),
-                            });
-                            break;
-                        }
-                    } else if ready > 0 {
                         match read_frame(&mut reader) {
                             Ok(Some(frame)) => {
                                 if frame.channel == channel && frame.kind == DATA {
@@ -224,6 +210,7 @@ impl HcClient {
                                 }
                             }
                             Ok(None) => break,
+                            Err(error) if error == READ_TIMEOUT => {}
                             Err(error) => {
                                 let _ = events.send(TerminalEvent::Error {
                                     address: address.clone(),
@@ -233,7 +220,6 @@ impl HcClient {
                                 break;
                             }
                         }
-                    }
                     match command_rx.try_recv() {
                         Ok(StreamCommand::Resize(cols, rows)) => {
                             parser.set_size(
@@ -391,6 +377,9 @@ fn read_frame(reader: &mut impl Read) -> Result<Option<Frame>, String> {
         {
             return Ok(None);
         }
+        Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+            return Err(READ_TIMEOUT.into());
+        }
         Err(error) => return Err(format!("Herdr frame read failed: {error}")),
     }
     let channel = u32::from_le_bytes(header[..4].try_into().unwrap());
@@ -402,7 +391,13 @@ fn read_frame(reader: &mut impl Read) -> Result<Option<Frame>, String> {
     let mut payload = vec![0; len];
     reader
         .read_exact(&mut payload)
-        .map_err(|e| format!("Herdr frame payload read failed: {e}"))?;
+        .map_err(|e| {
+            if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) {
+                READ_TIMEOUT.into()
+            } else {
+                format!("Herdr frame payload read failed: {e}")
+            }
+        })?;
     Ok(Some(Frame {
         channel,
         kind,
@@ -411,7 +406,7 @@ fn read_frame(reader: &mut impl Read) -> Result<Option<Frame>, String> {
 }
 
 fn write_frame(
-    writer: &Arc<Mutex<UnixStream>>,
+    writer: &Arc<Mutex<Stream>>,
     channel: u32,
     kind: u8,
     payload: &[u8],
@@ -430,14 +425,21 @@ fn write_frame(
         .map_err(|e| format!("Herdr frame write failed: {e}"))
 }
 
-fn socket_path() -> PathBuf {
+fn socket_path() -> Result<PathBuf, String> {
     if let Some(path) = env::var_os("HC_SOCKET") {
-        return PathBuf::from(path);
+        return Ok(PathBuf::from(path));
     }
-    if let Some(dir) = env::var_os("XDG_RUNTIME_DIR") {
-        return PathBuf::from(dir).join("herdr-core/default.sock");
+    #[cfg(unix)]
+    {
+        if let Some(dir) = env::var_os("XDG_RUNTIME_DIR") {
+            return Ok(PathBuf::from(dir).join("herdr-core/default.sock"));
+        }
+        return Ok(PathBuf::from(format!("/run/user/{}/herdr-core/default.sock", unsafe {
+            libc::getuid()
+        })));
     }
-    PathBuf::from(format!("/run/user/{}/herdr-core/default.sock", unsafe {
-        libc::getuid()
-    }))
+    #[cfg(windows)]
+    {
+        Err("Herdr Core is not available on Windows by default; set HC_SOCKET=tcp://HOST:PORT".into())
+    }
 }

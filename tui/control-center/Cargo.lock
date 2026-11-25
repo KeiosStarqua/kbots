@@ -277,10 +277,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "kbots-ipc"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "kbots-tui"
 version = "0.1.0"
 dependencies = [
  "crossterm",
+ "kbots-ipc",
  "ratatui",
  "serde",
  "serde_json",

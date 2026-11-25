@@ -1,10 +1,9 @@
+use kbots_ipc as ipc;
 use serde_json::{Value, json};
 use slint::ComponentHandle;
 use std::{
     collections::{HashMap, HashSet},
     env,
-    io::{BufRead, BufReader, Write},
-    os::unix::net::UnixStream,
     path::PathBuf,
     process::Command,
     sync::{Arc, Mutex, mpsc},
@@ -17,84 +16,25 @@ use terminal::{HcClient, ScreenCell, TerminalEvent};
 
 slint::include_modules!();
 
-/// Socket candidates in the contract's discovery order:
-/// `--socket`/`KBOTS_SOCKET` → `$XDG_RUNTIME_DIR/kbots.sock` → `$HOME/.local/run/kbots.sock`.
-/// An explicit socket means exactly that one path; otherwise the client falls
-/// back to the next candidate when a connect fails (a sandbox may deny
-/// /run/user/* while $HOME works).
-fn socket_candidates() -> Vec<PathBuf> {
-    let mut args = env::args().skip(1);
-    let mut explicit = None;
-    while let Some(arg) = args.next() {
-        if let Some(path) = arg.strip_prefix("--socket=") {
-            explicit = Some(PathBuf::from(path));
-            break;
-        }
-        if arg == "--socket" {
-            explicit = args.next().map(PathBuf::from);
-            break;
-        }
-    }
-    if let Some(path) = explicit.or_else(|| env::var_os("KBOTS_SOCKET").map(PathBuf::from)) {
-        return vec![path];
-    }
-    let mut candidates = Vec::new();
-    if let Some(path) = env::var_os("XDG_RUNTIME_DIR").map(|p| PathBuf::from(p).join("kbots.sock")) {
-        candidates.push(path);
-    }
-    let home = env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".local/run/kbots.sock");
-    if !candidates.contains(&home) {
-        candidates.push(home);
-    }
-    candidates
-}
-
+/// Daemon discovery is shared with the CLI/TUI (`--socket`, `--host`,
+/// KBOTS_* env vars and `kbots connect`). One RPC call per connection.
 fn rpc(method: &str, params: Value) -> Result<Value, String> {
-    let candidates = socket_candidates();
-    let mut stream = None;
-    let mut connect_errors = Vec::with_capacity(candidates.len());
-    for candidate in &candidates {
-        match UnixStream::connect(candidate) {
-            Ok(connected) => {
-                stream = Some(connected);
-                break;
-            }
-            Err(e) => {
-                connect_errors.push(format!("{}: {e}", candidate.display()));
-            }
+    let mut args = env::args().skip(1);
+    let mut host = None;
+    let mut socket = None;
+    while let Some(arg) = args.next() {
+        if let Some(value) = arg.strip_prefix("--host=") {
+            host = Some(value.to_owned());
+        } else if arg == "--host" {
+            host = args.next();
+        } else if let Some(value) = arg.strip_prefix("--socket=") {
+            socket = Some(PathBuf::from(value));
+        } else if arg == "--socket" {
+            socket = args.next().map(PathBuf::from);
         }
     }
-    let mut stream = stream.ok_or_else(|| {
-        format!("Cannot connect to daemon socket (tried: {})", connect_errors.join("; "))
-    })?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(4)))
-        .map_err(|e| e.to_string())?;
-    stream
-        .write_all(
-            format!(
-                "{}\n",
-                json!({"jsonrpc":"2.0", "id":1, "method":method, "params":params})
-            )
-            .as_bytes(),
-        )
-        .map_err(|e| e.to_string())?;
-    let mut line = String::new();
-    BufReader::new(stream)
-        .read_line(&mut line)
-        .map_err(|e| e.to_string())?;
-    let response: Value =
-        serde_json::from_str(&line).map_err(|e| format!("Invalid daemon response: {e}"))?;
-    if let Some(error) = response.get("error") {
-        return Err(error.to_string());
-    }
-    response
-        .get("result")
-        .cloned()
-        .ok_or_else(|| "Daemon response has no result".into())
+    let endpoints = ipc::endpoints(socket, host);
+    ipc::call(&endpoints, method, params).map_err(|error| error.to_string())
 }
 
 fn sstr(value: &Value, key: &str) -> String {

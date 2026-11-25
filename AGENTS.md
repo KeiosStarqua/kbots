@@ -90,9 +90,10 @@ When the user requests a durable behavior change, record it here or in the relev
 - This repo owns its package, lockfile, scripts, and `docs/` reference material.
 - Keep the Bun/TypeScript orchestration backend in `src/backend/`, the Slint desktop client in `gui/`, the Ratatui terminal client in `tui/control-center/`, and the automation CLI in `cli/`. GUI, TUI, and CLI talk to the daemon over a local IPC boundary; clients do not own bot scheduling or OpenCode sessions.
 - Keep sample UI state clearly marked until connected to the backend API. The TUI must restore terminal state on normal exit and on panics.
-- **One command to deploy on Nix-managed hosts: `kbdeploy "what changed"`.** `deploy/kbdeploy.sh` is packaged as `bin/kbdeploy`: it commits the checkout, creates a local `deploy/YYYY.MM.DD.n` tag and pushes commit + tag, runs `nix flake update kbots`, runs `home-manager switch --flake ~/.config/home-manager#$(id -un)`, and shows `kb status`. After code changes, use only this command — never list or run the underlying steps. `./install.sh` is the equivalent one command for non-Nix hosts: it synchronizes Bun dependencies, type-checks, builds the Rust clients, installs their binaries, and deploys `deploy/kbots-daemon.service` as the `kbots-daemon` systemd user service (enable + restart) when a user systemd session is available. Clients must always be running freshly deployed code; use `KBOTS_SKIP_DAEMON_UNIT=1 ./install.sh` only when explicitly unwanted, and then restart the daemon yourself (`systemctl --user restart kbots-daemon`). Use `KBOTS_INSTALL_DIR` when the default `~/.local/bin` is not the intended destination. Every `install.sh` deploy is tagged `deploy/YYYY.MM.DD.n` (CalVer, local) and stamped in `.deploy-version`; stable releases use SemVer `vX.Y.Z` tags. See `docs/deployment.md`.
+- **One command to deploy on Nix-managed hosts: `kbdeploy "what changed"`.** `deploy/kbdeploy.sh` is packaged as `bin/kbdeploy`: it commits the checkout, creates a local `deploy/YYYY.MM.DD.n` tag and pushes commit + tag, runs `nix flake update kbots`, runs `home-manager switch --flake ~/.config/home-manager#$(id -un)`, and shows `kb status`. After code changes, use only this command — never list or run the underlying steps. `./install.sh` is the equivalent one command for non-Nix hosts: it synchronizes Bun dependencies, type-checks, builds the Rust clients, installs their binaries, and deploys `deploy/kbots-daemon.service` as the `kbots-daemon` systemd user service (enable + restart) when a user systemd session is available. Clients must always be running freshly deployed code; use `KBOTS_SKIP_DAEMON_UNIT=1 ./install.sh` only when explicitly unwanted, and then restart the daemon yourself (`systemctl --user restart kbots-daemon`). Use `KBOTS_INSTALL_DIR` when the default `~/.local/bin` is not the intended destination. Every `install.sh` deploy is tagged `deploy/YYYY.MM.DD.n` (CalVer, local) and stamped in `.deploy-version`; stable releases use SemVer `vX.Y.Z` tags. On Windows the one command is `powershell -ExecutionPolicy Bypass -File .\install.ps1`: per-user binaries in `%LOCALAPPDATA%\kbots\bin`, no WSL and no admin, TCP daemon managed by `kbots daemon start|stop|status`. See `docs/deployment.md`.
 - `flake.nix` and the Home Manager module are part of this repo's install contract. Keep `bunDeps.outputHash` in sync with `bun.lock` (a mismatch prints the expected hash), keep the daemon's version equal to `cli/Cargo.toml`, and never make the Nix install write to `~/.local/bin` or an unmanaged systemd unit.
 - Keep backend modules separated by responsibility: `cli/`, `opencode/`, `orchestrator/`, `bots/`, `workflows/`, `adapters/`, and `db/` under `src/backend/`.
+- Keep client-shared IPC in `ipc/` (Rust crate `kbots-ipc`): Unix sockets on Unix, authenticated TCP on Windows/remote. CLI, TUI, and GUI use it for daemon discovery and token auth; never reimplement transport in a client.
 - The Rust CLI directory is `cli/` (package `kbots-cli`, binary `kbots`, alias `kb`). The GUI lives in `gui/`, not `gui/control-center/`.
 
 ### Local Contracts
@@ -123,7 +124,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - Run `bun run tsc --noEmit` after code changes.
 - Use `bun run control --list-sessions` for read-only service verification.
 - `nix build .#` is the packaging check (all four binaries, `kbdeploy`, desktop entry, `kb` alias); `nix develop` provides the Bun/Rust/Slint toolchain.
-- `kbdeploy "what changed"` is the one deploy command on Nix-managed hosts; `./install.sh` is the one deploy command on non-Nix hosts.
+- `kbdeploy "what changed"` is the one deploy command on Nix-managed hosts; `./install.sh` on Unix hosts and `powershell -ExecutionPolicy Bypass -File .\install.ps1` on Windows are the one-command deploys elsewhere.
 
 ### Architecture Principles
 
@@ -179,8 +180,9 @@ Whenever an agent works on a task, it keeps the task's issue on the repo's issue
 ## Child DOX Index
 
 - `src/backend/AGENTS.md`: Bun/TypeScript backend — daemon, OpenCode control utilities, orchestration modules (`cli/`, `opencode/`, `orchestrator/`, `bots/`, `workflows/`, `adapters/`, `db/`).
-- `cli/AGENTS.md`: Rust automation CLI (`kbots`, alias `kb`) — thin daemon client and local project configuration.
-- `gui/AGENTS.md`: Slint native desktop operator-control client (Unix socket JSON-RPC).
-- `tui/AGENTS.md`: Ratatui/Crossterm native terminal client (`tui/control-center/`).
+- `ipc/AGENTS.md`: shared Rust IPC crate (`kbots-ipc`) — Unix/TCP discovery, auth token, JSON-RPC calls.
+- `cli/AGENTS.md`: Rust automation CLI (`kbots`, alias `kb`) — thin daemon client, local project configuration, and daemon process lifecycle.
+- `gui/AGENTS.md`: Slint native desktop operator-control client (shared IPC transport).
+- `tui/AGENTS.md`: Ratatui/Crossterm native terminal client (`tui/control-center/`, shared IPC transport).
 
 Reference material (not DOX children): `ARCHITECTURE.md` (system shape, implemented vs planned), `docs/opencode-control.md` (embedded SDK setup, service client, provider behavior, session commands), `docs/opencode-token-speed.md` (read-only measurement of tok/s, TTFT and build time from OpenCode's local SQLite DB), `docs/kbots-ipc.md` (local JSON-RPC protocol for the daemon clients), `docs/deployment.md` (deploy tags, daemon service), `docs/plans/` (design plans). Module-level detail lives in each backend folder's `README.md`, `cli/README.md`, `gui/README.md`, and `tui/README.md`.

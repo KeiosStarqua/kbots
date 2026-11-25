@@ -2,9 +2,50 @@
 
 Laptop-local deployment only: no CI/CD, no containers, no remote servers. The
 repo owns everything under `src/backend/` (Bun daemon), `gui/` (Slint desktop
-client), `tui/control-center/` (Ratatui terminal client), and `cli/` (Rust
-automation CLI). There are two install paths: the Nix flake (used on
-Nix-managed hosts) and `./install.sh` (non-Nix hosts).
+client), `tui/control-center/` (Ratatui terminal client), `cli/` (Rust
+automation CLI), and `ipc/` (shared Rust transport). There are three install
+paths: the Nix flake (Nix-managed hosts), `./install.sh` (Unix hosts), and
+`./install.ps1` (native Windows, no WSL or admin rights).
+
+## Windows (`install.ps1`, no WSL or admin rights)
+
+Run from this checkout in PowerShell:
+
+```powershell
+scoop install bun rustup mingw   # once, per-user; no elevation
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+`install.ps1` requires `bun`, `cargo` and (for tags) `git` on PATH, falling back
+to Scoop's per-user cargo. It adds Scoop's MinGW `bin` to the build PATH
+(`dlltool` is needed by the windows-gnu Rust target), runs `bun install
+--frozen-lockfile` and `bun run tsc --noEmit`, builds all three Rust clients in
+release mode, then:
+
+1. Copies `kbots.exe`, `kbots-tui.exe`, `kbots-gui.exe` into
+   `KBOTS_INSTALL_DIR` (default `%LOCALAPPDATA%\kbots\bin`) and writes the `kb`
+   shim (`kb.cmd`).
+2. Adds the install dir to the **user** PATH (`HKCU\Environment`, no admin) and
+   writes a Start Menu shortcut for the GUI. `-NoPath` skips the PATH change.
+3. Records `repoRoot` (and optional `host`) in
+   `%USERPROFILE%\.local\state\kbots\client.json`, the same file Rust clients
+   read. `kbots daemon start` then works from any directory.
+4. Creates a CalVer `deploy/YYYY.MM.DD.n` tag and `.deploy-version`, like
+   `install.sh`.
+5. Starts the daemon unless `-NoDaemon` is passed. `-Autostart` adds a per-user
+   Startup shortcut that runs `kbots daemon start` at logon.
+
+On Windows the daemon binds `127.0.0.1:7878` over TCP (override with `--tcp
+HOST:PORT`) and clients find it through `client.json`. TCP requests carry the
+shared token from `%USERPROFILE%\.local\state\kbots\token`. To manage a Linux
+daemon over Tailscale instead, pass `-RemoteHost 100.x.x.x:7878` (or run `kbots
+connect --host ...` later); clients then skip starting a local daemon.
+
+`kbots daemon start/stop/status` manage a detached background process via a pid
+file in the state dir — no Windows service and no elevation. Stopping keeps all
+workflow state in SQLite. Herdr Core terminals need `HC_SOCKET=tcp://HOST:PORT`
+on Windows; without it the TUI's embedded Codex terminal is unavailable and
+`kbots tui --full` shows the dashboard instead.
 
 ## Nix flake (the install path on Nix-managed hosts)
 

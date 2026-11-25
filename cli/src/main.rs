@@ -2,13 +2,13 @@ use std::{
     env,
     error::Error,
     fmt, fs,
-    io::{self, BufRead, BufReader, IsTerminal, Write},
+    io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     process::{self, Command},
-    time::Duration,
 };
 
 use clap::{Parser, Subcommand};
+use kbots_ipc as ipc;
 use serde_json::{Value, json};
 
 mod project_config;
@@ -16,7 +16,7 @@ mod render;
 mod render_bots;
 
 /// Walk up from `start` and return the nearest directory that contains
-/// `.agents/bot/kbots.json` — the manifest `kbots project add` writes.
+/// `.agents/bot/kbots.json` G�� the manifest `kbots project add` writes.
 /// A bare `.agents/bot` tree (other tools, hand-written roles) is not a
 /// kbots project and must not be sent to the daemon as a scope.
 fn enclosing_project_path(start: PathBuf) -> Option<PathBuf> {
@@ -70,9 +70,9 @@ fn confirm_register(path: &Path) -> Result<bool, Box<dyn Error>> {
     Ok(answer_is_yes(&line))
 }
 
-fn register_with_daemon(path: &Path, sockets: &[PathBuf]) -> Result<Value, Box<dyn Error>> {
+fn register_with_daemon(path: &Path, endpoints: &[ipc::Endpoint]) -> Result<Value, Box<dyn Error>> {
     let params = register_project(Some(path.to_path_buf()), None)?;
-    let registered = request_with_fallback(sockets, "projects.register", params)?;
+    let registered = ipc::call(endpoints, "projects.register", params).map_err(|e| Box::<dyn Error>::from(e))?;
     let id = registered
         .get("projectId")
         .and_then(Value::as_str)
@@ -90,7 +90,7 @@ fn register_with_daemon(path: &Path, sockets: &[PathBuf]) -> Result<Value, Box<d
 /// stdin is a terminal; declining leaves the command unscoped.
 fn project_for_command(
     explicit: Option<String>,
-    sockets: &[PathBuf],
+    endpoints: &[ipc::Endpoint],
 ) -> Result<Option<String>, Box<dyn Error>> {
     if let Some(project) = explicit.filter(|value| !value.trim().is_empty()) {
         return Ok(Some(project));
@@ -104,7 +104,7 @@ fn project_for_command(
     if !confirm_register(&candidate)? {
         return Ok(None);
     }
-    register_with_daemon(&candidate, sockets)?;
+    register_with_daemon(&candidate, endpoints)?;
     Ok(Some(candidate.to_string_lossy().into_owned()))
 }
 
@@ -118,6 +118,14 @@ struct Cli {
     /// Override the daemon's Unix socket path (or set KBOTS_SOCKET).
     #[arg(long, global = true, value_name = "PATH")]
     socket: Option<PathBuf>,
+
+    /// Connect to a TCP daemon at HOST:PORT (or set KBOTS_HOST).
+    #[arg(long, global = true, value_name = "HOST:PORT")]
+    host: Option<String>,
+
+    /// Token for TCP auth (or set KBOTS_TOKEN; defaults to the daemon's token file).
+    #[arg(long, global = true)]
+    token: Option<String>,
 
     /// Print JSON output even when stdout is a terminal.
     #[arg(long, global = true)]
@@ -179,6 +187,29 @@ enum Commands {
         #[arg(long)]
         full: bool,
     },
+    /// Start, stop, or inspect a local daemon process (no service or admin rights).
+    Daemon {
+        #[command(subcommand)]
+        command: DaemonCommands,
+    },
+    /// Remember a remote daemon address for all later commands.
+    Connect {
+        /// HOST:PORT of the remote daemon; omit with --local to clear it.
+        host: Option<String>,
+        /// Forget the saved remote daemon and use the local default again.
+        #[arg(long)]
+        local: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum DaemonCommands {
+    /// Start the daemon in the background and write its pid to the state dir.
+    Start,
+    /// Stop the daemon recorded in the state dir (keeps all workflow state).
+    Stop,
+    /// Print whether the recorded daemon process is alive.
+    Status,
 }
 
 #[derive(Debug, Subcommand)]
@@ -346,7 +377,17 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
+    if let Some(token) = cli.token {
+        unsafe { env::set_var("KBOTS_TOKEN", token) };
+    }
     match cli.command {
+        Commands::Daemon { command } => daemon_command(command, cli.json),
+        Commands::Connect { host, local } => {
+            ipc::save_host(if local { None } else { host.as_deref() })?;
+            let address = ipc::saved_host().unwrap_or_else(|| "local daemon".to_owned());
+            emit("internal.connect", &json!({ "host": address }), cli.json);
+            Ok(())
+        }
         Commands::Gui => run_ui("KBOTS_GUI_BIN", "kbots-gui", None),
         Commands::Tui { full } => run_ui("KBOTS_TUI_BIN", "kbots-tui", full.then_some("--full")),
         Commands::Project {
@@ -367,9 +408,9 @@ fn run(cli: Cli) -> Result<(), Box<dyn Error>> {
             command: SessionCommands::Start { directory },
         } => run_sessions_start(directory, cli.json),
         command => {
-            let candidates = socket_candidates(cli.socket);
-            let (method, params) = rpc_call(command, &candidates)?;
-            let mut response = request_offering_register(&candidates, method, params)?;
+            let endpoints = ipc::endpoints(cli.socket, cli.host);
+            let (method, params) = rpc_call(command, &endpoints)?;
+            let mut response = request_offering_register(&endpoints, method, params)?;
             if method == "projects.list" {
                 project_config::enrich_projects_list(&mut response);
             }
@@ -401,7 +442,7 @@ fn print_json(value: &Value) {
 
 fn rpc_call(
     command: Commands,
-    sockets: &[PathBuf],
+    endpoints: &[ipc::Endpoint],
 ) -> Result<(&'static str, Value), Box<dyn Error>> {
     let request = match command {
         Commands::Status => ("system.status", json!({})),
@@ -424,7 +465,7 @@ fn rpc_call(
                 ("tasks.create", params)
             }
             TaskCommands::List { project, status } => {
-                let project = project_for_command(project, sockets)?;
+                let project = project_for_command(project, endpoints)?;
                 (
                     "tasks.list",
                     json!({ "project": project, "status": status }),
@@ -455,7 +496,7 @@ fn rpc_call(
         },
         Commands::Agents { command } => match command {
             AgentCommands::List { project, .. } => {
-                let project = project_for_command(project, sockets)?;
+                let project = project_for_command(project, endpoints)?;
                 ("agents.list", json!({ "project": project }))
             }
             AgentCommands::Start {
@@ -463,7 +504,7 @@ fn rpc_call(
                 project,
                 fresh,
             } => {
-                let project = project_for_command(project, sockets)?;
+                let project = project_for_command(project, endpoints)?;
                 (
                     "agents.start",
                     json!({ "role": role, "project": project, "fresh": fresh }),
@@ -516,6 +557,7 @@ fn rpc_call(
             ("approvals.approve", json!({ "approvalId": approval_id }))
         }
         Commands::Gui | Commands::Tui { .. } => unreachable!("UI commands are handled before RPC"),
+        Commands::Daemon { .. } | Commands::Connect { .. } => unreachable!("local command"),
     };
     Ok(request)
 }
@@ -611,31 +653,6 @@ fn register_project(path: Option<PathBuf>, name: Option<String>) -> Result<Value
     }))
 }
 
-/// Socket candidates in the contract's discovery order. An explicit
-/// `--socket` or `KBOTS_SOCKET` means exactly that one path; otherwise the
-/// clients fall back to the next candidate when a connect fails (a sandbox
-/// may deny /run/user/* while $HOME works).
-fn socket_candidates(override_path: Option<PathBuf>) -> Vec<PathBuf> {
-    if let Some(path) = override_path {
-        return vec![path];
-    }
-    if let Some(path) = env::var_os("KBOTS_SOCKET") {
-        return vec![PathBuf::from(path)];
-    }
-    let mut candidates = Vec::new();
-    if let Some(runtime_dir) = env::var_os("XDG_RUNTIME_DIR") {
-        candidates.push(PathBuf::from(runtime_dir).join("kbots.sock"));
-    }
-    let home = env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".local/run/kbots.sock");
-    if !candidates.contains(&home) {
-        candidates.push(home);
-    }
-    candidates
-}
-
 /// JSON-RPC `error` object from a daemon that accepted the connection.
 /// Distinct from a socket that could not be reached, so fallback does not
 /// report an application error as "start the daemon".
@@ -668,26 +685,6 @@ impl fmt::Display for DaemonRpcError {
 
 impl Error for DaemonRpcError {}
 
-fn request_with_fallback(
-    candidates: &[PathBuf],
-    method: &str,
-    params: Value,
-) -> Result<Value, Box<dyn Error>> {
-    let mut errors = Vec::with_capacity(candidates.len());
-    for socket in candidates {
-        match request(socket, method, params.clone()) {
-            Ok(response) => return Ok(response),
-            Err(error) if error.downcast_ref::<DaemonRpcError>().is_some() => return Err(error),
-            Err(error) => errors.push(format!("{}: {error}", socket.display())),
-        }
-    }
-    Err(format!(
-        "cannot connect to daemon socket (tried: {}); start the kbots daemon or set KBOTS_SOCKET",
-        errors.join("; ")
-    )
-    .into())
-}
-
 fn unknown_project_directory(daemon: &DaemonRpcError) -> Option<PathBuf> {
     let message = daemon.payload.get("message")?.as_str()?;
     let path = message.strip_prefix("unknown project:")?.trim();
@@ -702,79 +699,121 @@ fn unknown_project_directory(daemon: &DaemonRpcError) -> Option<PathBuf> {
 /// it and retry the same call once. Declining, or a non-interactive stdin,
 /// keeps the original error.
 fn request_offering_register(
-    candidates: &[PathBuf],
+    endpoints: &[ipc::Endpoint],
     method: &str,
     params: Value,
 ) -> Result<Value, Box<dyn Error>> {
-    match request_with_fallback(candidates, method, params.clone()) {
+    match ipc::call(endpoints, method, params.clone()) {
         Ok(response) => Ok(response),
-        Err(error) => {
-            let Some(path) = error
-                .downcast_ref::<DaemonRpcError>()
-                .and_then(unknown_project_directory)
-            else {
-                return Err(error);
+        Err(ipc::RpcError::Method { code, message }) => {
+            let daemon_error = DaemonRpcError { payload: json!({ "message": message }) };
+            let Some(path) = unknown_project_directory(&daemon_error) else {
+                return Err(Box::<dyn Error>::from(ipc::RpcError::Method { code, message }));
             };
             if !confirm_register(&path)? {
-                return Err(error);
+                return Err(Box::<dyn Error>::from(ipc::RpcError::Method { code, message }));
             }
-            register_with_daemon(&path, candidates)?;
+            register_with_daemon(&path, endpoints)?;
             let mut retry = params;
             if let (Some(object), Some(path)) = (retry.as_object_mut(), path.to_str()) {
                 object.insert("project".to_owned(), json!(path));
             }
-            request_with_fallback(candidates, method, retry)
+            ipc::call(endpoints, method, retry).map_err(Into::into)
         }
+        Err(other) => Err(Box::<dyn Error>::from(other)),
     }
 }
 
-#[cfg(unix)]
-fn request(socket: &std::path::Path, method: &str, params: Value) -> Result<Value, Box<dyn Error>> {
-    use std::os::unix::net::UnixStream;
+/// administrator privileges: `daemon start` spawns `bun run daemon` detached.
+fn daemon_pid_file() -> PathBuf {
+    ipc::state_dir().join("daemon.pid")
+}
 
-    let mut stream = UnixStream::connect(socket).map_err(|error| io::Error::from(error))?;
-    stream.set_read_timeout(Some(Duration::from_secs(15)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(15)))?;
+fn read_pid() -> Option<u32> {
+    fs::read_to_string(daemon_pid_file())
+        .ok()?
+        .trim()
+        .parse::<u32>()
+        .ok()
+        .filter(|pid| *pid > 0)
+}
 
-    let request = json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": method,
-        "params": params,
-    });
-    writeln!(stream, "{request}")?;
-    let mut response_line = String::new();
-    BufReader::new(stream).read_line(&mut response_line)?;
-    if response_line.is_empty() {
-        return Err("daemon closed the socket without sending a response".into());
-    }
-
-    let response: Value = serde_json::from_str(&response_line)?;
-    if let Some(error) = response.get("error") {
-        return Err(DaemonRpcError {
-            payload: error.clone(),
-        }
-        .into());
-    }
-    if response.get("jsonrpc").and_then(Value::as_str) != Some("2.0")
-        || response.get("id") != Some(&json!(1))
+fn pid_alive(pid: u32) -> bool {
+    #[cfg(windows)]
     {
-        return Err("daemon returned a response with an invalid JSON-RPC version or id".into());
+        Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .output()
+            .map(|out| String::from_utf8_lossy(&out.stdout).contains(&format!(" {pid} ")))
+            .unwrap_or(false)
     }
-    response
-        .get("result")
-        .cloned()
-        .ok_or_else(|| "daemon response did not include a result".into())
+    #[cfg(not(windows))]
+    {
+        Command::new("kill").args(["-0", &pid.to_string()]).status().map(|s| s.success()).unwrap_or(false)
+    }
 }
 
-#[cfg(not(unix))]
-fn request(
-    _socket: &std::path::Path,
-    _method: &str,
-    _params: Value,
-) -> Result<Value, Box<dyn Error>> {
-    Err("the kbots daemon currently uses Unix domain sockets and requires a Unix host".into())
+fn daemon_command(command: DaemonCommands, json_output: bool) -> Result<(), Box<dyn Error>> {
+    match command {
+        DaemonCommands::Start => {
+            if let Some(pid) = read_pid().filter(|pid| pid_alive(*pid)) {
+                emit("daemon.start", &json!({ "pid": pid, "alreadyRunning": true }), json_output);
+                return Ok(());
+            }
+            let bun = env::var_os("KBOTS_BUN").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("bun"));
+            let repo = ipc::repo_root().map(PathBuf::from).unwrap_or_else(|| {
+                // Source checkouts work from their current directory; the
+                // installer records the repo root for installed shims.
+                env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+            });
+            fs::create_dir_all(ipc::state_dir())?;
+            // One log file, truncated per start; enough to diagnose a failed
+            // background start without a service manager.
+            let log = fs::File::create(ipc::state_dir().join("daemon.log"))?;
+            let log_err = log.try_clone()?;
+            let mut child = Command::new(bun);
+            child
+                .args(["run", "daemon"])
+                .current_dir(&repo)
+                .stdout(std::process::Stdio::from(log))
+                .stderr(std::process::Stdio::from(log_err));
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                const DETACHED_PROCESS: u32 = 0x0000_0008;
+                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                child.creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW);
+            }
+            let child = child.spawn().map_err(|error| format!("cannot start daemon with bun: {error}"))?;
+            let pid = child.id();
+            fs::create_dir_all(ipc::state_dir())?;
+            fs::write(daemon_pid_file(), format!("{pid}\n"))?;
+            emit("daemon.start", &json!({ "pid": pid, "started": true }), json_output);
+        }
+        DaemonCommands::Stop => {
+            let pid = read_pid().ok_or("no recorded daemon process (run `kbots daemon start` first)")?;
+            if !pid_alive(pid) {
+                let _ = fs::remove_file(daemon_pid_file());
+                emit("daemon.stop", &json!({ "pid": pid, "wasRunning": false }), json_output);
+                return Ok(());
+            }
+            #[cfg(windows)]
+            let stopped = Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).status().map(|s| s.success()).unwrap_or(false);
+            #[cfg(not(windows))]
+            let stopped = Command::new("kill").arg(pid.to_string()).status().map(|s| s.success()).unwrap_or(false);
+            if !stopped { return Err(format!("could not stop daemon process {pid}").into()); }
+            let _ = fs::remove_file(daemon_pid_file());
+            emit("daemon.stop", &json!({ "pid": pid, "stopped": true }), json_output);
+        }
+        DaemonCommands::Status => {
+            let pid = read_pid();
+            let running = pid.map(pid_alive).unwrap_or(false);
+            emit("daemon.status", &json!({ "pid": pid, "running": running }), json_output);
+        }
+    }
+    Ok(())
 }
+
 
 fn run_ui(env_name: &str, binary_name: &str, arg: Option<&str>) -> Result<(), Box<dyn Error>> {
     let executable = env::var_os(env_name).map(PathBuf::from).unwrap_or_else(|| {

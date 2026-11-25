@@ -8,6 +8,9 @@ build = "build.rs"
 slint = "1.16.0"
 serde_json = "1"
 vt100 = "0.18.1"
+kbots-ipc = { path = "../ipc" }
+
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [build-dependencies]

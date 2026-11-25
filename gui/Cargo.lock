@@ -2360,11 +2360,19 @@ dependencies = [
 name = "kbots-control-center"
 version = "0.1.0"
 dependencies = [
+ "kbots-ipc",
  "libc",
  "serde_json",
  "slint",
  "slint-build",
  "vt100",
+]
+
+[[package]]
+name = "kbots-ipc"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]

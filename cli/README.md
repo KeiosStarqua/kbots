@@ -2,8 +2,9 @@
 
 `kbots` is a Rust command-line client for automation. `kb` is a short
 alias `install.sh` links to it (`~/.local/bin/kb` → `kbots`). It exposes stable
-subcommands, then sends daemon-owned operations over a local Unix domain
-socket. It does not implement orchestration or bypass daemon-side
+subcommands, then sends daemon-owned operations over the shared
+`kbots-ipc` transport (Unix socket on Unix, authenticated TCP on Windows).
+It does not implement orchestration or bypass daemon-side
 authorization and idempotency checks. When stdout is a terminal, output is a
 human-readable rendering (tables and summaries); when stdout is piped — or
 `--json` is passed — output is pretty-printed JSON, so scripts keep a stable
@@ -138,14 +139,20 @@ min). `KBOTS_REAP=off` / `KBOTS_RECOVER=off` / `KBOTS_STALE_CONTINUE=off`
 disable those steps. Sessions are never deleted.
 
 
-Use `--socket PATH` or `KBOTS_SOCKET` to select the daemon socket. By default,
-the CLI uses `$XDG_RUNTIME_DIR/kbots.sock`, falling back to
-`$HOME/.local/run/kbots.sock`. The GUI and TUI paths can be overridden with
-`KBOTS_GUI_BIN` and `KBOTS_TUI_BIN`. Pass `--json` to force JSON output on a
-terminal (default when piped).
+Use `--socket PATH` / `KBOTS_SOCKET` for a Unix daemon, or `--host HOST:PORT` /
+`KBOTS_HOST` for a TCP daemon (the only transport on Windows). By default the
+CLI uses `$XDG_RUNTIME_DIR/kbots.sock`, falling back to
+`$HOME/.local/run/kbots.sock` on Unix and `127.0.0.1:7878` on Windows. `kbots
+connect --host 100.x.x.x:7878` saves a remote daemon for later commands;
+`kbots connect --local` clears it. TCP requests use the token in
+`$HOME/.local/state/kbots/token`, overridable with `--token` / `KBOTS_TOKEN`.
+The GUI and TUI paths can be overridden with `KBOTS_GUI_BIN` and
+`KBOTS_TUI_BIN`. Pass `--json` to force JSON output on a terminal (default when
+piped).
 
-The Bun daemon and JSON-RPC server exist (v1 minimal) and run as the
-`kbots-daemon` systemd user service after `./install.sh` (opt out with
+On Windows, `kbots daemon start|stop|status` manage a detached local daemon
+using a pid file in the state dir — no service and no admin rights. Unix hosts
+run the `kbots-daemon` systemd user service after `./install.sh` (opt out with
 `KBOTS_SKIP_DAEMON_UNIT=1`; without systemd, `bun run daemon`). Until it
 is running, `status`, `tasks`, `projects`, `agents`, and `approve` return a
 clear connection error. `project add` prepares missing

@@ -35,7 +35,7 @@ function deployedVersion(): string {
 }
 
 export async function systemStatusHandler(
-  input: { socketPath: string; secondarySocketPath?: string; startedAt: number },
+  input: { socketPath: string; secondarySocketPath?: string; tcpAddress?: string; startedAt: number },
 ): Promise<Record<string, unknown>> {
   const uptimeSeconds = Math.floor((Date.now() - input.startedAt) / 1000)
   const agents = listAgents()
@@ -67,6 +67,7 @@ export async function systemStatusHandler(
       pid: process.pid,
       uptimeSeconds,
       socketPath: input.socketPath,
+      ...(input.tcpAddress ? { tcpAddress: input.tcpAddress } : {}),
       ...(input.secondarySocketPath ? { secondarySocketPath: input.secondarySocketPath } : {}),
     },
     projects: countProjects(),

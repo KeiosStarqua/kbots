@@ -10,7 +10,7 @@
 
 ## Local Contracts
 
-- Connects to the kbots daemon over its local Unix socket (JSON-RPC 2.0, one request per connection; discovery order `KBOTS_SOCKET` → `$XDG_RUNTIME_DIR/kbots.sock` → `$HOME/.local/run/kbots.sock`). The contract is `../docs/kbots-ipc.md`.
+- Connects to the kbots daemon through `../ipc/` (JSON-RPC 2.0, one request per connection): Unix socket on Unix (`KBOTS_SOCKET` → `$XDG_RUNTIME_DIR/kbots.sock` → `$HOME/.local/run/kbots.sock`), authenticated TCP on Windows/remote (`KBOTS_HOST` or `kbots connect`). The contract is `../docs/kbots-ipc.md`; never reimplement framing or auth here.
 - Renders live data only: a Codex page embedded as section 1, Overview counts, Tasks, Projects, managed Agents (with `herdr` state and `liveTerminals`), pending Approvals, and the Activity log (`events.list`, newest first). Polls every 5 seconds only while running; renders only on input or data change; keeps last-good data on mid-session failures and shows a persistent `daemon unreachable` banner when the socket is gone.
 - The Codex page (section 1 of the Full layout) shows a real Codex CLI owned by herdr-core (`hc`), the same runtime that holds every other kbots terminal. The TUI does not spawn a PTY: it runs `hc connect`, finishes the framed JSON-RPC handshake (`hello {framed:true}`), finds the live terminal labelled `kbots.codex=1` + `kbots.scope=<cwd hash>` + `kbots.task=<binding>` + `kbots.update_check=off` (or starts `codex --dangerously-bypass-approvals-and-sandbox` in a new one named `kbots-codex-<task>-<scope>`), and attaches with its pane size. First paint and live output are raw VT bytes fed to `vt100` and rendered by `tui-term`; every DATA frame is credited; Drop sends CLOSE and never kills the program. `HC_BIN` overrides the `hc` binary.
 - Codex's cwd is the project's `.agents/bot/router/` folder (Codex task-router instructions); when missing, the folder is scaffolded from the embedded template automatically (same content as `kb project sync`; never overwrites); falls back to the project root only on scaffold failure. Codex runs in yolo mode (owner directive — never asks for permission) with `-c check_for_update_on_startup=false`, so a startup update popup cannot block the embedded chat (updates are managed outside the TUI).
@@ -32,7 +32,7 @@
 - `cargo check` in `tui/control-center/`.
 - `cargo test` in `tui/control-center/` covers the frame codec, kitty flag tracking, key/mouse encoding, and terminal naming.
 - Live check: run the TUI in a real terminal, confirm `hc ls` shows `kbots-codex-<task>-<scope>`, type into Codex, quit with `Ctrl+]`, then confirm the terminal is still `live` (`hc read <address>`).
-- `./install.sh` from the repo root builds and installs the TUI and deploys the daemon on non-Nix hosts; on Nix-managed hosts `kbdeploy "what changed"` is the one deploy command (`nix build .#` is the packaging check, `nix develop` the toolchain). The TUI must be running freshly deployed code.
+- `./install.sh` from the repo root builds and installs the TUI and deploys the daemon on Unix hosts; `powershell -ExecutionPolicy Bypass -File .\install.ps1` is the Windows equivalent; on Nix-managed hosts `kbdeploy "what changed"` is the one deploy command (`nix build .#` is the packaging check, `nix develop` the toolchain). The TUI must be running freshly deployed code.
 
 ## Child DOX Index
 
