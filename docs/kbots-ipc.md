@@ -278,11 +278,11 @@ CEO session goes idle without marking its task done. Semantics:
 - Nudges are not user messages and do not enter `tasks.brief`/`tasks.inbox`.
   They are operational events, visible in `events.list` as `task.nudged`.
 
-## Maintenance loop (reconcile + reaper + recovery + stale continuation) — v7
+## Maintenance loop (reconcile + reaper + orphan sweep + recovery + stale continuation) — v7
 
 The daemon runs one more timer besides the watcher and the nudger: a
 maintenance tick, default every 60 s (`KBOTS_REAP_INTERVAL_MS`, minimum 10 s).
-It does four things, in order:
+It does five things, in order:
 
 1. `reconcileAgents()` — the same probe every `agents.*` mutation runs, now
    also on a timer, so a terminal that exits between RPCs is noticed instead
@@ -291,9 +291,14 @@ It does four things, in order:
    status (`done`, `failed`, `canceled`) and has been quiet for the grace
    period (`KBOTS_REAP_GRACE_MS`, default 10 min, measured from the task's
    `updated_at`).
-3. Dead-CEO recovery — resumes a CEO whose terminal failed while its task is
+3. The orphan sweep — kills live terminals carrying a `kbotsBotId` label whose
+   address no agent row references any more (left behind when a respawn
+   overwrote `hcAddress`). Terminals without that label (router, task, plain
+   shells) are never touched, and a stray must be seen in two consecutive
+   ticks before it is killed, so a spawn in progress is never caught.
+4. Dead-CEO recovery — resumes a CEO whose terminal failed while its task is
    still open and still inside the recovery window (next section).
-4. Stale-task continuation — resumes a CEO whose task is older than that
+5. Stale-task continuation — resumes a CEO whose task is older than that
    window, so an old task cannot stay in `researching` forever (below).
 
 Rules:
@@ -308,8 +313,16 @@ Rules:
 - A failed kill marks the row `error` and logs `agent.reap_failed`; the loop
   continues with the other agents and retries on the next tick.
 - `agent.reaped` is logged with `data: {agentId, sessionId, taskId, reason}`.
+- The orphan sweep only kills terminals carrying a `kbotsBotId` label that no
+  row references, and only after two consecutive sightings; it never touches
+  sessions or unlabelled terminals. Events: `agent.orphan_reaped` (`data:
+  {address, name, agentId, role, projectId, taskId, reason}`),
+  `agent.orphan_reap_failed`, and `agent.orphan_sweep_failed` when herdr cannot
+  list terminals. A respawn logs `agent.previous_terminal_retired`, or
+  `agent.previous_terminal_kill_failed` when the sweep has to catch it.
 - `KBOTS_REAP=off` skips the reaper step only; the reconcile tick keeps
-  running. `KBOTS_STALE_CONTINUE=off` skips stale-task continuation only.
+  running. `KBOTS_STALE_CONTINUE=off` skips stale-task continuation only, and
+  `KBOTS_ORPHAN_REAP=off` skips the orphan sweep.
 - Overlapping ticks are skipped, so a slow reconcile cannot pile up.
 
 ## Dead-CEO recovery — v7

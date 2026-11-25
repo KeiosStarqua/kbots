@@ -59,7 +59,7 @@ are local/direct OpenCode operations and work without that daemon.
 | --- | --- | --- |
 | `src/backend/cli/` | Transitional Bun command entry points for OpenCode control and bot session startup | Implemented |
 | `src/backend/opencode/` | Shared OpenCode service/session adapter | Planned module boundary; behavior currently lives in CLI scripts |
-| `src/backend/orchestrator/` | v1 task/project/approval/system services; v2 task dispatch (`orchestrator/dispatch.ts`: auto-dispatch, CEO session pool, idempotent via `task_agents` unique CEO link, per-project cap `KBOTS_CEO_CAP`) and message delivery (`orchestrator/delivery.ts`); file-change watcher (`orchestrator/watchers.ts`) prompts the managed git agent on working-tree deltas with debounce + cooldown; scheduling and broader workflow engine still planned | v1 services + git watcher + v2 dispatch implemented; scheduling/workflow engine still planned |
+| `src/backend/orchestrator/` | v1 task/project/approval/system services; v2 task dispatch (`orchestrator/dispatch.ts`: auto-dispatch, CEO session pool, idempotent via `task_agents` unique CEO link, per-project cap `KBOTS_CEO_CAP`) and message delivery (`orchestrator/delivery.ts`); file-change watcher (`orchestrator/watchers.ts`) prompts the managed git agent on working-tree deltas with debounce + cooldown; maintenance (`orchestrator/maintenance.ts`) reclaims kbots-labelled terminals left unreferenced by a respawn; scheduling and broader workflow engine still planned | v1 services + git watcher + v2 dispatch + terminal reaping implemented; scheduling/workflow engine still planned |
 | `src/backend/workflows/` | Task stages, dependencies, acceptance criteria, retry and approval rules | Planned |
 | `src/backend/bots/` | agents.list implemented (incl. managed `agents.start/show/stop/prompt/interrupt` lifecycle: exact session binding, terminal+headless modes, SQLite registry, boot reconciliation); CEO planning/review, GIT and OPS work contracts, coding worker policies | Lifecycle implemented; work contracts still planned |
 | `src/backend/adapters/` | Herdr adapter (read-only `hc ls`) implemented; Git and optional agmsg integrations | Herdr implemented; Git/agmsg planned |
@@ -264,6 +264,7 @@ remain unimplemented in the current tree.
 | `OPENCODE_MODEL` | Smoke check | `provider/model`; defaults to `opencode/inkling-2-small-free` |
 | `OPENCODE_DB_PATH` | Smoke check | Override OpenCode CLI database path |
 | `KBOTS_CEO_CAP` | Daemon | Per-project active-CEO dispatch cap; defaults to 4 |
+| `KBOTS_ORPHAN_REAP` | Daemon | Set to `off` to skip reclaiming unreferenced kbots terminals; default on |
 | `KBOTS_SOCKET` | CLI, GUI, TUI | Overrides the default daemon Unix socket |
 | `KBOTS_HOST`, `KBOTS_TCP` | CLI, GUI, TUI, daemon | TCP endpoint (`HOST:PORT`); `KBOTS_TCP=1` uses the default, and the daemon binds it |
 | `KBOTS_TOKEN` | CLI, GUI, TUI | TCP auth token; defaults to `$HOME/.local/state/kbots/token` |

@@ -10,6 +10,9 @@ Modules:
   `stopAgentCore`, `resumeAgentCore`. `resumeAgentCore` migrates a legacy
   `headless` row to `terminal` mode before spawning its hc terminal, so a
   resumed agent can be prompted and is not re-retired by `reconcileAgents`.
+  Both it and the resumable `agents.start` path call `retirePreviousTerminal`
+  before spawning, so an overwritten `hcAddress` does not leave a live orphan
+  terminal behind.
 - `health.ts` — the derived bot report (activity + health + bound task + session
   model) used by `agents.list`, `agents.show`, `system.status`, the CLI and the
   TUI. Pure and self-checked by `health.selfcheck.ts`

@@ -10,7 +10,11 @@
  *     (`done`, `failed`, `canceled`) for longer than the grace period is
  *     stopped. The OpenCode session and its history stay untouched, exactly as
  *     `agents.stop` leaves them; only the terminal process goes away.
- *  3. Stale-task continuation — a CEO that stopped outside the crash recovery
+ *  3. Orphan sweep — live kbots-labelled terminals whose address is no longer
+ *     referenced by any agent row (left behind when a respawn overwrote
+ *     `hcAddress`) are reclaimed. A terminal must appear in two consecutive
+ *     ticks before it is killed, so a spawn in progress is never caught.
+ *  4. Stale-task continuation — a CEO that stopped outside the crash recovery
  *     window is resumed by the same path, so an old task cannot sit in
  *     `researching` forever. It shares the recovery budget, cooldown and CEO
  *     cap; `KBOTS_STALE_CONTINUE=off` disables only this step.
@@ -29,6 +33,7 @@
  *
  * Env:
  *  - `KBOTS_REAP=off` — skip the reaper step; the reconcile tick keeps running.
+ *  - `KBOTS_ORPHAN_REAP=off` — skip the orphan sweep.
  *  - `KBOTS_REAP_INTERVAL_MS` — tick period, default 60000, minimum 10000.
  *  - `KBOTS_REAP_GRACE_MS` — quiet time after the task finished, default
  *    600000 (10 min); `0` reaps on the first tick after the task finishes.
@@ -44,6 +49,7 @@ import {
   getTaskCeoAgent,
   getTaskIdForAgent,
   isLiveAgentStatus,
+  listAgents,
   listLiveAgents,
   listTasksByStatus,
   recordRecovery,
@@ -53,12 +59,18 @@ import {
   type TaskRow,
 } from "../db/repositories.ts"
 import {
+  MANAGED_ROLES,
   promptAgentCore,
   reconcileAgents,
   resumeAgentCore,
   stopAgentCore,
 } from "../bots/agents.ts"
 import { ACTIVE_TASK_STATUSES, recoveryWindowMs, staleContinueEnabled } from "../bots/health.ts"
+import {
+  killTerminal,
+  listTerminalsByLabels,
+  type HerdrFullTerminal,
+} from "../adapters/herdr.ts"
 
 const DEFAULT_INTERVAL_MS = 60_000
 const DEFAULT_GRACE_MS = 10 * 60 * 1000
@@ -135,15 +147,124 @@ export async function reapFinishedTerminals(now: number = Date.now()): Promise<n
   return stopped
 }
 
+// -- orphan terminal sweep ---------------------------------------------------
+
+export function orphanReapEnabled(): boolean {
+  return process.env.KBOTS_ORPHAN_REAP !== "off"
+}
+
+/** A live kbots terminal no agent row points at any more. */
+export interface OrphanTerminal {
+  address: string
+  name: string | null
+  labels: Record<string, string>
+}
+
+/**
+ * Pure selection rule for the sweep. Only terminals carrying a `kbotsBotId`
+ * label are ours; everything else (router/task terminals, plain shells) is
+ * left alone even when no registry row references it.
+ */
+export function selectOrphanTerminals(
+  terminals: ReadonlyArray<{ address: string; state: string; name?: string | null; labels: Record<string, string> }>,
+  referencedAddresses: ReadonlySet<string>,
+): OrphanTerminal[] {
+  return terminals.filter(
+    (terminal) =>
+      terminal.state === "live" &&
+      Object.prototype.hasOwnProperty.call(terminal.labels, "kbotsBotId") &&
+      !referencedAddresses.has(terminal.address),
+  ).map((terminal) => ({
+    address: terminal.address,
+    name: terminal.name ?? null,
+    labels: terminal.labels,
+  }))
+}
+
+/**
+ * First sighting of an unreferenced terminal only records it; a second
+ * consecutive sighting kills it. That one-tick window covers the gap between
+ * `spawnTerminal` and the `hcAddress` update, and any slow DB write.
+ */
+const pendingOrphans = new Set<string>()
+
+export async function reapOrphanTerminals(): Promise<number> {
+  if (!orphanReapEnabled()) return 0
+
+  let terminals: HerdrFullTerminal[] = []
+  try {
+    for (const role of MANAGED_ROLES) {
+      terminals.push(...await listTerminalsByLabels({ kbotsRole: role }))
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    addEvent("agent.orphan_sweep_failed", `Orphan sweep could not list terminals: ${message}`, { message })
+    return 0
+  }
+
+  // Keep every address any row holds, including stopped ones: a row may be in
+  // the middle of stopping and its terminal must not be swept out from under it.
+  const referenced = new Set(
+    listAgents()
+      .map((agent) => agent.hcAddress)
+      .filter((address): address is string => typeof address === "string" && address.length > 0),
+  )
+  const orphans = selectOrphanTerminals(terminals, referenced)
+  const current = new Set(orphans.map((terminal) => terminal.address))
+  for (const address of pendingOrphans) {
+    if (!current.has(address)) pendingOrphans.delete(address)
+  }
+
+  let killed = 0
+  for (const terminal of orphans) {
+    if (!pendingOrphans.has(terminal.address)) {
+      pendingOrphans.add(terminal.address)
+      continue
+    }
+    const { kbotsBotId: botId, kbotsRole: role, kbotsProjectId: projectId, kbotsTaskId: taskId } = terminal.labels
+    try {
+      await killTerminal(terminal.address)
+      killed += 1
+      addEvent(
+        "agent.orphan_reaped",
+        `Agent ${botId ?? "?"} orphan terminal ${terminal.address} reaped`,
+        {
+          address: terminal.address,
+          ...(terminal.name ? { name: terminal.name } : {}),
+          ...(botId ? { agentId: botId } : {}),
+          ...(role ? { role } : {}),
+          ...(projectId ? { projectId } : {}),
+          ...(taskId ? { taskId } : {}),
+          reason: "unreferenced_terminal",
+        },
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      addEvent(
+        "agent.orphan_reap_failed",
+        `Orphan terminal ${terminal.address} could not be reaped: ${message}`,
+        { address: terminal.address, ...(botId ? { agentId: botId } : {}), message },
+      )
+    }
+    pendingOrphans.delete(terminal.address)
+  }
+  return killed
+}
+
 export async function tick(): Promise<void> {
   // Reconcile may stop rows as it discovers dead terminals, so it runs first;
   // the reaper then only sees agents that really are still running, and the
-  // recovery step sees the rows that just died.
+  // recovery step sees the rows that just died. The orphan sweep runs after
+  // the reaper so a terminal just retired by it is not mistaken for a stray.
   await reconcileAgents()
   await reapFinishedTerminals()
+  await reapOrphanTerminals()
   await recoverLostTaskCeos()
   await continueStaleTaskCeos()
 }
+
+/** Pure helpers exposed for the stand-alone self-check; not daemon API. */
+export const __maintenanceInternals = { selectOrphanTerminals, orphanReapEnabled }
 
 // -- dead-CEO recovery ------------------------------------------------------
 

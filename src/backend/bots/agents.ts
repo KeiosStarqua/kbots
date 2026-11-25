@@ -135,7 +135,7 @@ async function ensureAgentModel(
 const DEFERRED_RETRY_COOLDOWN_MS = 10 * 60 * 1000
 const deferredAttemptAt = new Map<string, number>()
 
-const MANAGED_ROLES: readonly AgentRole[] = ["ceo", "git", "ops"]
+export const MANAGED_ROLES: readonly AgentRole[] = ["ceo", "git", "ops"]
 
 function roleParam(raw: unknown): AgentRole {
   const value = typeof raw === "string" ? raw.trim().toLowerCase() : ""
@@ -372,6 +372,7 @@ export async function agentsStartHandler(params: Record<string, unknown>): Promi
     }
 
     if (mode === "terminal") {
+      await retirePreviousTerminal(agent)
       const spawned = await spawnTerminal(agent, project.path, project.name, sessionId)
       agent = updateAgent(agent.id, { hcAddress: spawned.address, name: spawned.name ?? agent.name, status: "running", lastError: null })!
     } else {
@@ -403,6 +404,35 @@ export async function agentsStartHandler(params: Record<string, unknown>): Promi
 }
 
 /**
+ * Retire the terminal an agent row currently points at before a respawn.
+ * `resumeAgentCore` and the resumable branch of `agentsStartHandler` overwrite
+ * `hcAddress` with the new terminal; without this the old terminal stays live
+ * in herdr, unreferenced by any row, and the maintenance orphan sweep is the
+ * only thing that ever reclaims it. Best effort: a failed kill is logged and
+ * the spawn proceeds, leaving the sweep to catch the stray.
+ */
+export async function retirePreviousTerminal(agent: AgentRow): Promise<void> {
+  const address = agent.hcAddress
+  if (!address || agent.mode !== "terminal") return
+  try {
+    await killTerminal(address)
+    addEvent(
+      "agent.previous_terminal_retired",
+      `Agent ${agent.id} previous terminal ${address} retired before respawn`,
+      { agentId: agent.id, role: agent.role, address },
+    )
+  } catch (error) {
+    if (error instanceof HerdrError && error.code === 3) return // already gone
+    const message = error instanceof Error ? error.message : String(error)
+    addEvent(
+      "agent.previous_terminal_kill_failed",
+      `Agent ${agent.id} previous terminal ${address} could not be retired: ${message}`,
+      { agentId: agent.id, role: agent.role, address, message },
+    )
+  }
+}
+
+/**
  * Resume an agent against its existing OpenCode session. Used by the
  * maintenance loop when a CEO terminal was lost while its task was still open:
  * the session (and its history) is reused, never recreated. A session the
@@ -424,6 +454,7 @@ export async function resumeAgentCore(agent: AgentRow, project: ProjectRow): Pro
   try {
     const { client } = await makeOpencodeClient()
     await client.session.get({ sessionID: sessionId })
+    await retirePreviousTerminal(current)
     const spawned = await spawnTerminal(current, project.path, project.name, sessionId)
     current = updateAgent(current.id, {
       hcAddress: spawned.address,
