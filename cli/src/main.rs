@@ -1,7 +1,7 @@
 use std::{
     env,
     error::Error,
-    fs,
+    fmt, fs,
     io::{self, BufRead, BufReader, IsTerminal, Write},
     path::PathBuf,
     process::{self, Command},
@@ -15,20 +15,25 @@ mod project_config;
 mod render;
 mod render_bots;
 
-/// Walk up from the current directory and return the nearest directory that
-/// contains a `.agents/bot` folder (i.e. a project `kbots project add` has
-/// scaffolded). Used to scope list commands to the current project when
-/// `--project` is not given. Returns None outside any project.
-fn current_project_path() -> Option<PathBuf> {
-    let mut dir = env::current_dir().ok()?;
+/// Walk up from `start` and return the nearest directory that contains
+/// `.agents/bot/kbots.json` — the manifest `kbots project add` writes.
+/// A bare `.agents/bot` tree (other tools, hand-written roles) is not a
+/// kbots project and must not be sent to the daemon as a scope.
+fn enclosing_project_path(start: PathBuf) -> Option<PathBuf> {
+    let mut dir = start;
     loop {
-        if dir.join(".agents/bot").is_dir() {
+        if dir.join(".agents/bot/kbots.json").is_file() {
             return fs::canonicalize(&dir).ok();
         }
         if !dir.pop() {
             return None;
         }
     }
+}
+
+/// Project that owns the current directory, when one exists.
+fn current_project_path() -> Option<PathBuf> {
+    enclosing_project_path(env::current_dir().ok()?)
 }
 
 /// Resolve `--project`, defaulting to the enclosing kbots project when run
@@ -555,6 +560,38 @@ fn socket_candidates(override_path: Option<PathBuf>) -> Vec<PathBuf> {
     candidates
 }
 
+/// JSON-RPC `error` object from a daemon that accepted the connection.
+/// Distinct from a socket that could not be reached, so fallback does not
+/// report an application error as "start the daemon".
+#[derive(Debug)]
+struct DaemonRpcError {
+    payload: Value,
+}
+
+impl fmt::Display for DaemonRpcError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let message = self
+            .payload
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        const UNKNOWN_PROJECT: &str = "unknown project:";
+        if let Some(path) = message.strip_prefix(UNKNOWN_PROJECT) {
+            let path = path.trim();
+            return write!(
+                f,
+                "unknown project: {path}. Register it with `kb project add {path}`"
+            );
+        }
+        if !message.is_empty() {
+            return write!(f, "{message}");
+        }
+        write!(f, "daemon returned an error: {}", self.payload)
+    }
+}
+
+impl Error for DaemonRpcError {}
+
 fn request_with_fallback(
     candidates: &[PathBuf],
     method: &str,
@@ -564,6 +601,7 @@ fn request_with_fallback(
     for socket in candidates {
         match request(socket, method, params.clone()) {
             Ok(response) => return Ok(response),
+            Err(error) if error.downcast_ref::<DaemonRpcError>().is_some() => return Err(error),
             Err(error) => errors.push(format!("{}: {error}", socket.display())),
         }
     }
@@ -597,7 +635,10 @@ fn request(socket: &std::path::Path, method: &str, params: Value) -> Result<Valu
 
     let response: Value = serde_json::from_str(&response_line)?;
     if let Some(error) = response.get("error") {
-        return Err(format!("daemon returned an error: {error}").into());
+        return Err(DaemonRpcError {
+            payload: error.clone(),
+        }
+        .into());
     }
     if response.get("jsonrpc").and_then(Value::as_str) != Some("2.0")
         || response.get("id") != Some(&json!(1))
@@ -639,4 +680,57 @@ fn run_ui(env_name: &str, binary_name: &str, arg: Option<&str>) -> Result<(), Bo
         ))
     })?;
     process::exit(status.code().unwrap_or(1));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unknown_project_error_names_project_add() {
+        let error = DaemonRpcError {
+            payload: json!({
+                "code": -32602,
+                "message": "unknown project: /tmp/film-production"
+            }),
+        };
+        assert_eq!(
+            error.to_string(),
+            "unknown project: /tmp/film-production. Register it with `kb project add /tmp/film-production`"
+        );
+    }
+
+    #[test]
+    fn other_daemon_errors_keep_the_message() {
+        let error = DaemonRpcError {
+            payload: json!({
+                "code": -32602,
+                "message": "role must be one of ceo, git, ops"
+            }),
+        };
+        assert_eq!(error.to_string(), "role must be one of ceo, git, ops");
+    }
+
+    #[test]
+    fn enclosing_project_requires_kbots_manifest() {
+        let root = std::env::temp_dir().join(format!("kbots-scope-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+
+        let bare = root.join("bare/.agents/bot/ceo");
+        fs::create_dir_all(&bare).unwrap();
+        assert!(enclosing_project_path(bare).is_none());
+
+        let managed = root.join("managed");
+        let manifest_dir = managed.join(".agents/bot");
+        fs::create_dir_all(&manifest_dir).unwrap();
+        fs::write(manifest_dir.join("kbots.json"), "{}").unwrap();
+
+        // A nearer `.agents/bot` without a manifest must not hide the real project.
+        let nested = managed.join("vendor/.agents/bot/ceo");
+        fs::create_dir_all(&nested).unwrap();
+        let found = enclosing_project_path(nested).unwrap();
+        assert_eq!(found, fs::canonicalize(&managed).unwrap());
+
+        let _ = fs::remove_dir_all(&root);
+    }
 }
