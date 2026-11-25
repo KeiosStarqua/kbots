@@ -411,8 +411,12 @@ export async function agentsStartHandler(params: Record<string, unknown>): Promi
 export async function resumeAgentCore(agent: AgentRow, project: ProjectRow): Promise<AgentRow> {
   const sessionId = agent.sessionId
   if (!sessionId) throw new Error(`agent ${agent.id} has no session to resume`)
+  // Resuming always goes through an hc terminal. Old rows are still marked
+  // `headless`; keeping that mode would make reconcileAgents close the row
+  // again and promptAgentCore refuse to prompt it, so migrate on resume.
   let current = updateAgent(agent.id, {
     status: "starting",
+    mode: "terminal",
     lastError: null,
     stoppedAt: null,
     stopReason: null,
@@ -714,6 +718,8 @@ export async function reconcileAgents(): Promise<{ checked: number; changed: num
         // Legacy headless rows (retired 2026-11-19): do not probe OpenCode,
         // do not spawn terminals, do not prompt. Auto-close them so old
         // kbots setups clear themselves at boot; sessions stay untouched.
+        // resumeAgentCore migrates a row to terminal mode before spawning,
+        // so this only retires rows never resumed into a terminal.
         updateAgent(agent.id, {
           status: "stopped",
           stoppedAt: new Date().toISOString(),

@@ -7,7 +7,9 @@ TypeScript; bots do not grant themselves additional capabilities.
 Modules:
 
 - `agents.ts` — managed-agent lifecycle (`agents.*` handlers), `reconcileAgents`,
-  `stopAgentCore`, `resumeAgentCore`.
+  `stopAgentCore`, `resumeAgentCore`. `resumeAgentCore` migrates a legacy
+  `headless` row to `terminal` mode before spawning its hc terminal, so a
+  resumed agent can be prompted and is not re-retired by `reconcileAgents`.
 - `health.ts` — the derived bot report (activity + health + bound task + session
   model) used by `agents.list`, `agents.show`, `system.status`, the CLI and the
   TUI. Pure and self-checked by `health.selfcheck.ts`

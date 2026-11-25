@@ -15,7 +15,9 @@ Background loops (one timer each, all `unref`-ed and stopped on shutdown):
   its history are kept — kbots never deletes sessions. Recovery resumes a
   crashed CEO inside `KBOTS_RECOVER_WINDOW_MS`; stale-task continuation does
   the same for older tasks so they cannot stay in `researching` forever, using
-  the same budget/cooldown/cap. `KBOTS_REAP=off` skips the reaper,
+  the same budget/cooldown/cap. Both resume through `resumeAgentCore`, which
+  records terminal mode so the continuation prompt is deliverable.
+  `KBOTS_REAP=off` skips the reaper,
   `KBOTS_STALE_CONTINUE=off` skips stale continuation, and `KBOTS_RECOVER=off`
   disables both resumes; the reconcile tick always runs.
 
