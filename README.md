@@ -55,8 +55,8 @@ scoop bucket add kbots https://github.com/KeiosStarqua/kbots
 scoop install kbots
 ```
 
-The manifest builds from a pinned `deploy/YYYY.MM.DD.n` source tag, so `bun`,
-`rustup`, `mingw` and `git` must be installed (all are in Scoop's `main` bucket).
+The manifest builds from a pinned source commit, so `bun`, `rustup`, `mingw`
+and `git` must be installed (all are in Scoop's `main` bucket).
 It installs the `kbots`, `kb`, `kbots-tui` and `kbots-gui` shims and a Start Menu
 shortcut, but intentionally does not start the daemon — run
 `kbots daemon start` first. This is the same package `skoopub` installs through

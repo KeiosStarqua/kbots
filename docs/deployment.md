@@ -50,7 +50,7 @@ on Windows; without it the TUI's embedded Codex terminal is unavailable and
 ## Scoop bucket (Windows)
 
 `bucket/kbots.json` is a personal Scoop bucket manifest. It downloads the
-source archive of a pushed `deploy/YYYY.MM.DD.n` tag with a pinned SHA-256 and
+source archive of a pushed commit with a pinned SHA-256 and
 runs `install.ps1` with `-InstallDir $dir -NoPath -NoDaemon`, so the build uses
 the repo's own installer rather than a binary release. `depends` pulls `bun`,
 `rustup`, `mingw` and `git`; the build step puts MinGW's `bin` on `PATH` for
@@ -66,9 +66,10 @@ scoop install kbots
 
 `skoopub` adds the same bucket and app through `scoop.json`, so a fresh machine
 gets kbots from `scoop import scoop.json`. When bumping the manifest, update
-`version`, `url`, `hash` and `extract_dir` together from a tag that is already
-pushed to `origin` and contains `install.ps1` — earlier deploy tags predate the
-Windows installer and cannot be installed this way. See `bucket/AGENTS.md`.
+`version`, `url`, `hash` and `extract_dir` together from a commit that is already
+pushed to `origin` and contains `install.ps1`. No deploy tag is needed — local
+installs never create tags, and `kbdeploy` owns the `deploy/YYYY.MM.DD.n` tag
+line. See `bucket/AGENTS.md`.
 
 ## Nix flake (the install path on Nix-managed hosts)
 

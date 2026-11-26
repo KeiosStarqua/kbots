@@ -2,7 +2,7 @@
 
 ## Purpose
 
-- Personal Scoop bucket that installs kbots natively on Windows. The manifest downloads a pinned source tag and builds the CLI, TUI and GUI with the repo's own `install.ps1`.
+- Personal Scoop bucket that installs kbots natively on Windows. The manifest downloads a pinned source commit and builds the CLI, TUI and GUI with the repo's own `install.ps1`. No binary release or git tag is needed.
 
 ## Ownership
 
@@ -10,17 +10,18 @@
 
 ## Local Contracts
 
-- The manifest pins a `deploy/YYYY.MM.DD.n` tag that is pushed to `origin`. `version`, `url`, `hash` and `extract_dir` always move together. The tag must contain `install.ps1` and native Windows support — older deploy tags predate both and cannot be used, even though they are valid CalVer tags.
-- `url` is the GitHub archive of that tag; `hash` is the SHA-256 of the downloaded zip; `extract_dir` is `kbots-deploy-YYYY.MM.DD.n` (the tag's slash becomes a dash in GitHub's archive root).
-- Installation delegates to `install.ps1` with `-InstallDir $dir -NoPath -NoDaemon`. Do not duplicate the Bun/Rust build logic here, and do not let the Scoop install start a daemon or create a deploy tag.
+- The manifest pins a commit that is pushed to `origin`. `version`, `url`, `hash` and `extract_dir` always move together. The commit must contain `install.ps1` and native Windows support.
+- `url` is the GitHub archive of that commit; `hash` is the SHA-256 of the downloaded zip; `extract_dir` is `kbots-<full-sha>` (GitHub's archive root).
+- Installation delegates to `install.ps1` with `-InstallDir $dir -NoPath -NoDaemon`. Do not duplicate the Bun/Rust build logic here, and do not let the Scoop install start a daemon.
+- Local installs never create git tags. `install.ps1` only writes a local CalVer to `.deploy-version` in the app directory; `kbdeploy` remains the only tag source.
+- `install.ps1` must tolerate a source archive with no `.git`: with `$ErrorActionPreference='Stop'`, redirecting native git stderr to `$null` throws in Windows PowerShell 5.1, so the dirty check uses `Test-Path .git` instead.
 - `depends` lists `bun`, `rustup`, `mingw` and `git`. MinGW's `bin` is added to `PATH` for `dlltool` before the build.
 - The installer forces `RUSTUP_TOOLCHAIN=stable-x86_64-pc-windows-gnu` (installing that toolchain if missing) without changing the user's global default. An MSVC-only toolchain cannot link the GUI/Slint build because `link.exe` is not installed.
-- The pinned tag's `install.ps1` must tolerate a source archive with no `.git`: with `$ErrorActionPreference='Stop'`, redirecting native git stderr to `$null` throws in Windows PowerShell 5.1, so the deploy-tag step checks `Test-Path .git` instead.
 - Shims: `kbots`, `kb` (alias of `kbots.exe`), `kbots-tui`, `kbots-gui`; Start Menu shortcut `kbots Control Center`.
 
 ## Work Guidance
 
-- To bump the installed version, pick a pushed deploy tag, download its archive, recompute the SHA-256, update all four fields, then verify a fresh install before committing.
+- To bump the installed version, pick a pushed commit, download its archive, recompute the SHA-256, update all four fields, then verify a fresh install before committing. Do not create a deploy tag just to bump the bucket.
 - The manifest is referenced by the `kbots` bucket entry in the `skoopub` repo's `scoop.json`; keep the version in sync when that repo is updated.
 - Keep the daemon's repo root in `%USERPROFILE%\.local\state\kbots\client.json` — `install.ps1` writes it, and `kbots daemon start` needs it.
 

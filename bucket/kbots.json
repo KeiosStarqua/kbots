@@ -1,11 +1,11 @@
 {
-    "version": "2026.11.26.2",
+    "version": "2026.11.26-ca37ea7",
     "description": "Local coding workflow orchestrator with CLI, TUI and GUI clients",
     "homepage": "https://github.com/KeiosStarqua/kbots",
     "license": "Unknown",
-    "url": "https://github.com/KeiosStarqua/kbots/archive/refs/tags/deploy/2026.11.26.2.zip",
-    "hash": "4328c6f79ee228810778c2da5a6313fa01a7c5a14b0889b4f96c48bd0c519b5b",
-    "extract_dir": "kbots-deploy-2026.11.26.2",
+    "url": "https://github.com/KeiosStarqua/kbots/archive/ca37ea7235bb34c78b5a8cd5570a9ea3c44f7a66.zip",
+    "hash": "c62571bc2d4e556e88328c50243127aa8132476a17e1aa3ebf6cd30c2304f034",
+    "extract_dir": "kbots-ca37ea7235bb34c78b5a8cd5570a9ea3c44f7a66",
     "depends": [
         "bun",
         "rustup",
@@ -54,7 +54,7 @@
         "On Windows the daemon binds authenticated TCP on 127.0.0.1:7878."
     ],
     "##": [
-        "kbots publishes no binary release; the manifest builds from a pinned deploy tag.",
-        "Bump version, url, hash and extract_dir together when moving to a newer tag."
+        "kbots publishes no binary release; the manifest builds from a pinned commit, so no deploy tag is needed.",
+        "Bump version, url, hash and extract_dir together when moving to a newer commit."
     ]
 }
