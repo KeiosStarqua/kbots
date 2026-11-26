@@ -23,7 +23,7 @@
 
 - To bump the installed version, pick a pushed commit, download its archive, recompute the SHA-256, update all four fields, then verify a fresh install before committing. Do not create a deploy tag just to bump the bucket.
 - The manifest is referenced by the `kbots` bucket entry in the `skoopub` repo's `scoop.json`; keep the version in sync when that repo is updated.
-- Keep the daemon's repo root in `%USERPROFILE%\.local\state\kbots\client.json` — `install.ps1` writes it, and `kbots daemon start` needs it.
+- Keep the daemon's repo root in `%USERPROFILE%\.local\state\kbots\client.json` — `install.ps1` writes it, and `kbots daemon start` needs it. It must be UTF-8 without BOM; Rust's `serde_json` rejects a BOM and would fall back to the caller's cwd.
 
 ## Verification
 

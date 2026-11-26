@@ -29,7 +29,8 @@ release mode, then:
    writes a Start Menu shortcut for the GUI. `-NoPath` skips the PATH change.
 3. Records `repoRoot` (and optional `host`) in
    `%USERPROFILE%\.local\state\kbots\client.json`, the same file Rust clients
-   read. `kbots daemon start` then works from any directory.
+   read. The file is written as UTF-8 **without BOM** because `serde_json`
+   rejects a leading BOM; `kbots daemon start` then works from any directory.
 4. Records a local CalVer in `.deploy-version`, like `install.sh`; local
    source installs never create a git tag (only `kbdeploy` does).
 5. Starts the daemon unless `-NoDaemon` is passed. `-Autostart` adds a per-user

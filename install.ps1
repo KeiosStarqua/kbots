@@ -91,7 +91,9 @@ $configPath = Join-Path $stateDir 'client.json'
 $config = if (Test-Path $configPath) { Get-Content $configPath -Raw | ConvertFrom-Json } else { [PSCustomObject]@{} }
 $config | Add-Member -NotePropertyName repoRoot -NotePropertyValue $repoRoot -Force
 if ($RemoteHost) { $config | Add-Member -NotePropertyName host -NotePropertyValue $RemoteHost -Force }
-Set-Content -Path $configPath -Encoding UTF8 -Value ($config | ConvertTo-Json -Compress)
+# Rust's serde_json rejects a UTF-8 BOM, and Set-Content -Encoding UTF8 adds
+# one in Windows PowerShell 5.1. Write BOM-less UTF-8 so repoRoot is honored.
+[System.IO.File]::WriteAllText($configPath, ($config | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding($false)))
 
 $startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
 if (Test-Path $startMenu) {
