@@ -54,7 +54,9 @@ source archive of a pushed `deploy/YYYY.MM.DD.n` tag with a pinned SHA-256 and
 runs `install.ps1` with `-InstallDir $dir -NoPath -NoDaemon`, so the build uses
 the repo's own installer rather than a binary release. `depends` pulls `bun`,
 `rustup`, `mingw` and `git`; the build step puts MinGW's `bin` on `PATH` for
-`dlltool`. Shims: `kbots`, `kb`, `kbots-tui`, `kbots-gui`, plus a Start Menu
+`dlltool` and forces the `stable-x86_64-pc-windows-gnu` toolchain (installing it
+if needed) without changing the user's global default — an MSVC-only toolchain
+cannot link the Slint build without `link.exe`. Shims: `kbots`, `kb`, `kbots-tui`, `kbots-gui`, plus a Start Menu
 shortcut for the GUI. The daemon is not started — run `kbots daemon start`.
 
 ```powershell

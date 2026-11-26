@@ -14,6 +14,10 @@
     ],
     "installer": {
         "script": [
+            "$gnuToolchain = 'stable-x86_64-pc-windows-gnu'",
+            "if (-not (rustup toolchain list | Where-Object { $_ -like '*windows-gnu*' })) { rustup toolchain install $gnuToolchain --profile minimal }",
+            "if ($LASTEXITCODE -ne 0) { throw 'rustup toolchain install failed' }",
+            "$env:RUSTUP_TOOLCHAIN = $gnuToolchain",
             "$mingwBin = Join-Path (appdir mingw) 'current\\bin'",
             "if (Test-Path $mingwBin) { $env:PATH = \"$mingwBin;$env:PATH\" }",
             "powershell -NoProfile -ExecutionPolicy Bypass -File \"$dir\\install.ps1\" -InstallDir \"$dir\" -NoPath -NoDaemon",
