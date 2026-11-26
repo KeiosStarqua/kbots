@@ -6,14 +6,14 @@ import { mkdir, readFile, realpath, rename, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, resolve } from "node:path"
 
-type Role = "ceo" | "git" | "ops"
+type Role = "ceo" | "git" | "ops" | "audit"
 type Manifest = {
   version: 1
   bots: Record<Role, { enabled?: boolean; opencode?: Record<string, unknown> }>
 }
 type SessionState = { version: 1; projectPath: string; sessions: Partial<Record<Role, string>> }
 
-const roles: Role[] = ["ceo", "git", "ops"]
+const roles: Role[] = ["ceo", "git", "ops", "audit"]
 
 function option(name: string): string | undefined {
   const index = process.argv.indexOf(name)
@@ -33,8 +33,18 @@ async function readManifest(projectPath: string): Promise<Manifest> {
     throw new Error(`${path} must contain a version 1 kbots manifest`)
   }
   const manifest = parsed as Manifest
-  if (!manifest.bots || roles.some((role) => !manifest.bots[role])) {
-    throw new Error(`${path} must define ceo, git, and ops bot entries`)
+  if (!manifest.bots || typeof manifest.bots !== "object") {
+    throw new Error(`${path} must define bot entries`)
+  }
+  // Manifests written before the audit role existed stay valid: fill missing
+  // roles with the starter config instead of refusing to start sessions.
+  for (const role of roles) {
+    if (!manifest.bots[role]) {
+      manifest.bots[role] = {
+        enabled: true,
+        opencode: { instructions: [`.agents/bot/${role}/AGENTS.md`], plugins: [] },
+      }
+    }
   }
   return manifest
 }

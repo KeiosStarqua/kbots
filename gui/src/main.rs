@@ -460,7 +460,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 ui.set_notice("Enter an existing project directory.".into());
                 return;
             }
-            let mut params = json!({"path":path,"botRoles":["ceo","git","ops"]});
+            let mut params = json!({"path":path,"botRoles":["ceo","git","ops","audit"]});
             if !name.is_empty() {
                 params["name"] = json!(name);
             }

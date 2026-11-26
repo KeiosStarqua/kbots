@@ -30,7 +30,7 @@ export async function registerProjectHandler(params: Record<string, unknown>): P
     name = params.name.trim()
   }
 
-  let botRoles = ["ceo", "git", "ops"]
+  let botRoles = ["ceo", "git", "ops", "audit"]
   if (params.botRoles !== undefined) {
     const value = params.botRoles
     if (

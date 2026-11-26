@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 8
+export const SCHEMA_VERSION = 9
 
 // v1 → v2 delta: the managed agent registry. Applied to databases already at
 // user_version 1; fresh databases run SCHEMA_DDL which embeds everything.
@@ -6,7 +6,7 @@ export const AGENTS_DDL = `
 CREATE TABLE IF NOT EXISTS agents(
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  role TEXT NOT NULL CHECK(role IN ('ceo','git','ops','worker')),
+  role TEXT NOT NULL CHECK(role IN ('ceo','git','ops','audit','worker')),
   mode TEXT NOT NULL CHECK(mode IN ('headless','terminal')),
   directory TEXT NOT NULL,
   status TEXT NOT NULL CHECK(status IN ('starting','running','stopping','stopped','error')),
@@ -85,7 +85,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE TABLE IF NOT EXISTS task_agents(
   task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
   agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
-  role TEXT NOT NULL CHECK(role IN ('ceo','worker','git','ops')),
+  role TEXT NOT NULL CHECK(role IN ('ceo','worker','git','ops','audit')),
   created_at TEXT NOT NULL,
   PRIMARY KEY (task_id, agent_id)
 );
@@ -149,6 +149,60 @@ export const V8_DDL = `
 ALTER TABLE agents ADD COLUMN stop_reason TEXT;
 `
 
+// v8 → v9 delta: add the `audit` role. SQLite cannot alter a CHECK, so both
+// tables carrying a role CHECK are rebuilt with the same columns and rows.
+// The caller wraps this in `PRAGMA foreign_keys = OFF/ON` because task_agents
+// references agents(id) and DROP TABLE would implicitly delete linked rows.
+// The active-agent index keeps `role != 'ceo'`, so audit gets the same
+// one-active-per-project rule as git and ops.
+export const V9_DDL = `
+DROP TABLE IF EXISTS agents_v9;
+CREATE TABLE agents_v9(
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK(role IN ('ceo','git','ops','audit','worker')),
+  mode TEXT NOT NULL CHECK(mode IN ('headless','terminal')),
+  directory TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('starting','running','stopping','stopped','error')),
+  session_id TEXT,
+  hc_address TEXT,
+  name TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  stopped_at TEXT,
+  last_error TEXT,
+  last_outcome TEXT,
+  last_outcome_at TEXT,
+  stop_reason TEXT
+);
+INSERT INTO agents_v9
+  SELECT id, project_id, role, mode, directory, status, session_id, hc_address, name,
+    created_at, updated_at, stopped_at, last_error, last_outcome, last_outcome_at, stop_reason
+  FROM agents;
+DROP TABLE agents;
+ALTER TABLE agents_v9 RENAME TO agents;
+CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project_id);
+CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_active_project_role
+  ON agents(project_id, role)
+  WHERE status IN ('starting','running','stopping') AND role != 'ceo';
+
+DROP TABLE IF EXISTS task_agents_v9;
+CREATE TABLE task_agents_v9(
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK(role IN ('ceo','worker','git','ops','audit')),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (task_id, agent_id)
+);
+INSERT INTO task_agents_v9(task_id, agent_id, role, created_at)
+  SELECT task_id, agent_id, role, created_at FROM task_agents;
+DROP TABLE task_agents;
+ALTER TABLE task_agents_v9 RENAME TO task_agents;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_task_agents_ceo ON task_agents(task_id) WHERE role = 'ceo';
+CREATE INDEX IF NOT EXISTS idx_task_agents_agent ON task_agents(agent_id);
+`
+
 export const SCHEMA_DDL = `
 CREATE TABLE IF NOT EXISTS projects(
   id TEXT PRIMARY KEY,
@@ -207,7 +261,7 @@ CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
 CREATE TABLE IF NOT EXISTS agents(
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  role TEXT NOT NULL CHECK(role IN ('ceo','git','ops','worker')),
+  role TEXT NOT NULL CHECK(role IN ('ceo','git','ops','audit','worker')),
   mode TEXT NOT NULL CHECK(mode IN ('headless','terminal')),
   directory TEXT NOT NULL,
   status TEXT NOT NULL CHECK(status IN ('starting','running','stopping','stopped','error')),
@@ -247,7 +301,7 @@ CREATE TABLE IF NOT EXISTS watchers(
 CREATE TABLE IF NOT EXISTS task_agents(
   task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
   agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
-  role TEXT NOT NULL CHECK(role IN ('ceo','worker','git','ops')),
+  role TEXT NOT NULL CHECK(role IN ('ceo','worker','git','ops','audit')),
   created_at TEXT NOT NULL,
   PRIMARY KEY (task_id, agent_id)
 );

@@ -18,7 +18,7 @@
 - The daemon binds Unix sockets on Unix and authenticated TCP on Windows or with `--tcp`/`KBOTS_TCP`; `adapters/transport.ts` owns the TCP address and the token file, and TCP requests without a valid token are rejected with `-32001`. Unix socket permissions stay `0600`; never log token values.
 - Read saved provider connections through OpenCode; never print credential values or auth headers.
 - Session commands default to the current directory; pass `--directory` to select another project. Prompting and interrupting sessions are explicit actions. Do not delete sessions. Interrupting a session does not stop a recurring schedule attached to it.
-- Every configured project uses `.agents/bot/{ceo,git,ops}` plus `.agents/bot/router/` (embedded Codex task router; not an OpenCode role); the `.agents/bot/kbots.json` manifest generates per-role `opencode.jsonc` files for ceo/git/ops only. Preserve existing configs by default; regenerate only with `kbots project configure --overwrite`. Never copy project-specific bot instructions, plugins, or local state between repos.
+- Every configured project uses `.agents/bot/{ceo,git,ops,audit}` plus `.agents/bot/router/` (embedded Codex task router; not an OpenCode role); the `.agents/bot/kbots.json` manifest generates per-role `opencode.jsonc` files for ceo/git/ops/audit only. Preserve existing configs by default; regenerate only with `kbots project configure --overwrite`. Never copy project-specific bot instructions, plugins, or local state between repos.
 
 ## Work Guidance
 

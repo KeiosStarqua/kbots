@@ -135,7 +135,7 @@ async function ensureAgentModel(
 const DEFERRED_RETRY_COOLDOWN_MS = 10 * 60 * 1000
 const deferredAttemptAt = new Map<string, number>()
 
-export const MANAGED_ROLES: readonly AgentRole[] = ["ceo", "git", "ops"]
+export const MANAGED_ROLES: readonly AgentRole[] = ["ceo", "git", "ops", "audit"]
 
 function roleParam(raw: unknown): AgentRole {
   const value = typeof raw === "string" ? raw.trim().toLowerCase() : ""
@@ -825,7 +825,7 @@ export async function reconcileAgents(): Promise<{ checked: number; changed: num
 // agents.list (extended): unmanaged items as before + managed bots merged in.
 // ---------------------------------------------------------------------------
 
-type Role = "ceo" | "git" | "ops"
+type Role = "ceo" | "git" | "ops" | "audit"
 type Manifest = {
   version: 1
   bots: Record<string, { enabled?: boolean }>
@@ -860,7 +860,7 @@ type LiveTerminal = import("../adapters/herdr.ts").HerdrTerminal & {
   role?: string
 }
 
-const roles: Role[] = ["ceo", "git", "ops"]
+const roles: Role[] = ["ceo", "git", "ops", "audit"]
 const maxStateFiles = 200
 
 function stateRoot(): string {
@@ -872,7 +872,7 @@ function sha256hex(value: string): string {
 }
 
 function defaultBots(): Record<Role, { enabled: boolean }> {
-  return { ceo: { enabled: true }, git: { enabled: true }, ops: { enabled: true } }
+  return { ceo: { enabled: true }, git: { enabled: true }, ops: { enabled: true }, audit: { enabled: true } }
 }
 
 async function readManifestBots(

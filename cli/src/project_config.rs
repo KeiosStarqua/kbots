@@ -6,10 +6,10 @@ use std::{
 
 use serde_json::{Map, Value, json};
 
-const ROLES: [&str; 3] = ["ceo", "git", "ops"];
+const ROLES: [&str; 4] = ["ceo", "git", "ops", "audit"];
 /// The embedded Codex task-router bot folder. Seeded and synced alongside the
 /// OpenCode roles, but not an OpenCode role: no manifest entry, no config.
-const SEEDED_ROLES: [&str; 4] = ["ceo", "git", "ops", "router"];
+const SEEDED_ROLES: [&str; 5] = ["ceo", "git", "ops", "audit", "router"];
 const CONFIG_FILE: &str = "kbots.json";
 /// Local, machine-scoped record of what the installed CLI scaffolded in this
 /// repo: the kbots version, a hash of the embedded template set, and the
@@ -40,6 +40,7 @@ pub fn ensure_project_bot_scaffold(project_root: &Path) -> Result<(), Box<dyn Er
         }
     }
 
+    ensure_manifest_roles(project_root)?;
     render_configs(project_root, false)?;
     Ok(())
 }
@@ -78,6 +79,7 @@ pub fn configure_project(
         }
     }
 
+    ensure_manifest_roles(&project_root)?;
     let (written, preserved, disabled) = render_configs(&project_root, overwrite)?;
     Ok(json!({
         "projectPath": project_root,
@@ -436,6 +438,43 @@ fn write_manifest(project_root: &Path) -> Result<(), Box<dyn Error>> {
 fn write_manifest_value(project_root: &Path, config: &Value) -> Result<(), Box<dyn Error>> {
     let text = serde_json::to_string_pretty(config)? + "\n";
     fs::write(manifest_path(project_root), text)?;
+    Ok(())
+}
+
+/// Manifests written before the audit role existed are still valid. Add
+/// defaults for any missing role so `project add`/`configure` converge an
+/// existing project instead of failing on `render_configs`.
+fn ensure_manifest_roles(project_root: &Path) -> Result<(), Box<dyn Error>> {
+    let path = manifest_path(project_root);
+    let mut manifest: Value = serde_json::from_slice(&fs::read(&path)?)?;
+    let bots = manifest
+        .get_mut("bots")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{} must contain a bots object", path.display()),
+            )
+        })?;
+    let mut changed = false;
+    for role in ROLES {
+        if !bots.contains_key(role) {
+            bots.insert(
+                role.to_owned(),
+                json!({
+                    "enabled": true,
+                    "opencode": {
+                        "instructions": [format!(".agents/bot/{role}/AGENTS.md")],
+                        "plugins": [],
+                    }
+                }),
+            );
+            changed = true;
+        }
+    }
+    if changed {
+        write_manifest_value(project_root, &manifest)?;
+    }
     Ok(())
 }
 
@@ -855,6 +894,7 @@ fn default_agents(role: &str) -> &'static str {
         "ceo" => include_str!("../templates/bots/ceo/AGENTS.md"),
         "git" => include_str!("../templates/bots/git/AGENTS.md"),
         "ops" => include_str!("../templates/bots/ops/AGENTS.md"),
+        "audit" => include_str!("../templates/bots/audit/AGENTS.md"),
         "router" => include_str!("../templates/bots/router/AGENTS.md"),
         _ => unreachable!("unknown bot role"),
     }
@@ -948,5 +988,46 @@ mod tests {
             .clone();
         resolve_mcp_disables_with(&mut config, "ceo", &global_servers()).expect("no-op");
         assert_eq!(config.len(), 1);
+    }
+
+    #[test]
+    fn scaffold_roles_include_audit_with_a_template() {
+        assert_eq!(ROLES, ["ceo", "git", "ops", "audit"]);
+        assert_eq!(SEEDED_ROLES, ["ceo", "git", "ops", "audit", "router"]);
+        assert!(default_agents("audit").contains("# AUDIT bot"));
+    }
+
+    #[test]
+    fn manifest_written_before_audit_gains_it_without_touching_existing_roles() {
+        let root = std::env::temp_dir().join(format!("kbots-manifest-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join(".agents/bot")).expect("bot dir");
+        let manifest = json!({
+            "version": 1,
+            "bots": {
+                "ceo": { "enabled": false, "opencode": { "model": "custom/model" } },
+                "git": { "enabled": true },
+            },
+        });
+        write_manifest_value(&root, &manifest).expect("write manifest");
+
+        ensure_manifest_roles(&root).expect("converges");
+        let upgraded: Value =
+            serde_json::from_str(&fs::read_to_string(manifest_path(&root)).expect("read"))
+                .expect("parse");
+        let bots = upgraded["bots"].as_object().expect("bots");
+        assert_eq!(bots["ceo"]["opencode"]["model"], json!("custom/model"));
+        assert_eq!(bots["ceo"]["enabled"], json!(false));
+        assert_eq!(bots["ops"]["enabled"], json!(true));
+        assert_eq!(bots["audit"]["enabled"], json!(true));
+
+        let once = fs::read_to_string(manifest_path(&root)).expect("read");
+        ensure_manifest_roles(&root).expect("idempotent");
+        assert_eq!(
+            fs::read_to_string(manifest_path(&root)).expect("read"),
+            once
+        );
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

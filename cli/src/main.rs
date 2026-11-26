@@ -72,7 +72,8 @@ fn confirm_register(path: &Path) -> Result<bool, Box<dyn Error>> {
 
 fn register_with_daemon(path: &Path, endpoints: &[ipc::Endpoint]) -> Result<Value, Box<dyn Error>> {
     let params = register_project(Some(path.to_path_buf()), None)?;
-    let registered = ipc::call(endpoints, "projects.register", params).map_err(|e| Box::<dyn Error>::from(e))?;
+    let registered =
+        ipc::call(endpoints, "projects.register", params).map_err(|e| Box::<dyn Error>::from(e))?;
     let id = registered
         .get("projectId")
         .and_then(Value::as_str)
@@ -276,7 +277,7 @@ enum AgentCommands {
     /// Start (or resume) a bot agent for a registered project.
     Start {
         /// Bot role to start.
-        #[arg(value_parser = ["ceo", "git", "ops"])]
+        #[arg(value_parser = ["ceo", "git", "ops", "audit"])]
         role: String,
         /// Project id, name, or path (defaults to the current directory).
         #[arg(long, short = 'p')]
@@ -649,7 +650,7 @@ fn register_project(path: Option<PathBuf>, name: Option<String>) -> Result<Value
     Ok(json!({
         "path": path,
         "name": project_name,
-        "botRoles": ["ceo", "git", "ops"],
+        "botRoles": ["ceo", "git", "ops", "audit"],
     }))
 }
 
@@ -706,12 +707,20 @@ fn request_offering_register(
     match ipc::call(endpoints, method, params.clone()) {
         Ok(response) => Ok(response),
         Err(ipc::RpcError::Method { code, message }) => {
-            let daemon_error = DaemonRpcError { payload: json!({ "message": message }) };
+            let daemon_error = DaemonRpcError {
+                payload: json!({ "message": message }),
+            };
             let Some(path) = unknown_project_directory(&daemon_error) else {
-                return Err(Box::<dyn Error>::from(ipc::RpcError::Method { code, message }));
+                return Err(Box::<dyn Error>::from(ipc::RpcError::Method {
+                    code,
+                    message,
+                }));
             };
             if !confirm_register(&path)? {
-                return Err(Box::<dyn Error>::from(ipc::RpcError::Method { code, message }));
+                return Err(Box::<dyn Error>::from(ipc::RpcError::Method {
+                    code,
+                    message,
+                }));
             }
             register_with_daemon(&path, endpoints)?;
             let mut retry = params;
@@ -749,7 +758,11 @@ fn pid_alive(pid: u32) -> bool {
     }
     #[cfg(not(windows))]
     {
-        Command::new("kill").args(["-0", &pid.to_string()]).status().map(|s| s.success()).unwrap_or(false)
+        Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
     }
 }
 
@@ -757,10 +770,16 @@ fn daemon_command(command: DaemonCommands, json_output: bool) -> Result<(), Box<
     match command {
         DaemonCommands::Start => {
             if let Some(pid) = read_pid().filter(|pid| pid_alive(*pid)) {
-                emit("daemon.start", &json!({ "pid": pid, "alreadyRunning": true }), json_output);
+                emit(
+                    "daemon.start",
+                    &json!({ "pid": pid, "alreadyRunning": true }),
+                    json_output,
+                );
                 return Ok(());
             }
-            let bun = env::var_os("KBOTS_BUN").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("bun"));
+            let bun = env::var_os("KBOTS_BUN")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("bun"));
             let repo = ipc::repo_root().map(PathBuf::from).unwrap_or_else(|| {
                 // Source checkouts work from their current directory; the
                 // installer records the repo root for installed shims.
@@ -784,35 +803,63 @@ fn daemon_command(command: DaemonCommands, json_output: bool) -> Result<(), Box<
                 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
                 child.creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW);
             }
-            let child = child.spawn().map_err(|error| format!("cannot start daemon with bun: {error}"))?;
+            let child = child
+                .spawn()
+                .map_err(|error| format!("cannot start daemon with bun: {error}"))?;
             let pid = child.id();
             fs::write(daemon_pid_file(), format!("{pid}\n"))?;
-            emit("daemon.start", &json!({ "pid": pid, "started": true }), json_output);
+            emit(
+                "daemon.start",
+                &json!({ "pid": pid, "started": true }),
+                json_output,
+            );
         }
         DaemonCommands::Stop => {
-            let pid = read_pid().ok_or("no recorded daemon process (run `kbots daemon start` first)")?;
+            let pid =
+                read_pid().ok_or("no recorded daemon process (run `kbots daemon start` first)")?;
             if !pid_alive(pid) {
                 let _ = fs::remove_file(daemon_pid_file());
-                emit("daemon.stop", &json!({ "pid": pid, "wasRunning": false }), json_output);
+                emit(
+                    "daemon.stop",
+                    &json!({ "pid": pid, "wasRunning": false }),
+                    json_output,
+                );
                 return Ok(());
             }
             #[cfg(windows)]
-            let stopped = Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]).status().map(|s| s.success()).unwrap_or(false);
+            let stopped = Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
             #[cfg(not(windows))]
-            let stopped = Command::new("kill").arg(pid.to_string()).status().map(|s| s.success()).unwrap_or(false);
-            if !stopped { return Err(format!("could not stop daemon process {pid}").into()); }
+            let stopped = Command::new("kill")
+                .arg(pid.to_string())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !stopped {
+                return Err(format!("could not stop daemon process {pid}").into());
+            }
             let _ = fs::remove_file(daemon_pid_file());
-            emit("daemon.stop", &json!({ "pid": pid, "stopped": true }), json_output);
+            emit(
+                "daemon.stop",
+                &json!({ "pid": pid, "stopped": true }),
+                json_output,
+            );
         }
         DaemonCommands::Status => {
             let pid = read_pid();
             let running = pid.map(pid_alive).unwrap_or(false);
-            emit("daemon.status", &json!({ "pid": pid, "running": running }), json_output);
+            emit(
+                "daemon.status",
+                &json!({ "pid": pid, "running": running }),
+                json_output,
+            );
         }
     }
     Ok(())
 }
-
 
 fn run_ui(env_name: &str, binary_name: &str, arg: Option<&str>) -> Result<(), Box<dyn Error>> {
     let executable = env::var_os(env_name).map(PathBuf::from).unwrap_or_else(|| {
@@ -859,10 +906,13 @@ mod tests {
         let error = DaemonRpcError {
             payload: json!({
                 "code": -32602,
-                "message": "role must be one of ceo, git, ops"
+                "message": "role must be one of ceo, git, ops, audit"
             }),
         };
-        assert_eq!(error.to_string(), "role must be one of ceo, git, ops");
+        assert_eq!(
+            error.to_string(),
+            "role must be one of ceo, git, ops, audit"
+        );
     }
 
     #[test]

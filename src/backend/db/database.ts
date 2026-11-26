@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { mkdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
-import { AGENTS_DDL, SCHEMA_DDL, SCHEMA_VERSION, TASKS_V4_DDL, V5_DDL, V6_DDL, V7_DDL, V8_DDL, WATCHERS_DDL } from "./schema.ts"
+import { AGENTS_DDL, SCHEMA_DDL, SCHEMA_VERSION, TASKS_V4_DDL, V5_DDL, V6_DDL, V7_DDL, V8_DDL, V9_DDL, WATCHERS_DDL } from "./schema.ts"
 
 export function defaultDatabasePath(): string {
   const stateRoot = process.env.XDG_STATE_HOME ?? join(homedir(), ".local/state")
@@ -37,6 +37,16 @@ export function openDatabase(path: string = defaultDatabasePath()): Database {
     if (current <= 5) db.exec(V6_DDL)
     if (current <= 6) db.exec(V7_DDL)
     if (current <= 7) db.exec(V8_DDL)
+    if (current <= 8) {
+      // v9 rebuilds `agents` and `task_agents`; task_agents references agents,
+      // so the rebuild must run with FK enforcement off (restored right after).
+      db.exec("PRAGMA foreign_keys = OFF")
+      try {
+        db.exec(V9_DDL)
+      } finally {
+        db.exec("PRAGMA foreign_keys = ON")
+      }
+    }
   }
   if (current < SCHEMA_VERSION) {
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)

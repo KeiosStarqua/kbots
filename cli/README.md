@@ -156,7 +156,7 @@ run the `kbots-daemon` systemd user service after `./install.sh` (opt out with
 `KBOTS_SKIP_DAEMON_UNIT=1`; without systemd, `bun run daemon`). Until it
 is running, `status`, `tasks`, `projects`, `agents`, and `approve` return a
 clear connection error. `project add` prepares missing
-`.agents/bot/{ceo,git,ops,router}` folders and starter `AGENTS.md` files before the
+`.agents/bot/{ceo,git,ops,audit,router}` folders and starter `AGENTS.md` files before the
 daemon request. Editable source templates live in `cli/templates/bots/` and
 are embedded into the CLI binary at build time. Kbots creates a starter only
 when that role’s `AGENTS.md` is missing; it never replaces existing bot
@@ -212,7 +212,7 @@ already defines under `mcp.servers`, is an error. This affects that role's
 sessions only (they run in `.agents/bot/<role>`), not sessions opened at the
 project root. Existing configs are only rewritten by `--overwrite`.
 
-`kbots project sync` refreshes the starter `.agents/bot/{ceo,git,ops,router}/AGENTS.md`
+`kbots project sync` refreshes the starter `.agents/bot/{ceo,git,ops,audit,router}/AGENTS.md`
 files from the templates embedded at build time. Missing files are created;
 files identical to the template are left alone; customized files are kept unless
 `--force` is passed, in which case each is backed up next to the original as

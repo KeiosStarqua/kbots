@@ -339,7 +339,7 @@ export function listTasksByStatus(
 export interface TaskAgentLinkRow {
   taskId: string
   agentId: string
-  role: "ceo" | "worker" | "git" | "ops"
+  role: "ceo" | "worker" | "git" | "ops" | "audit"
   createdAt: string
 }
 
@@ -351,14 +351,14 @@ interface TaskAgentLinkRecord {
 }
 
 function toTaskAgentLinkRow(record: TaskAgentLinkRecord): TaskAgentLinkRow {
-  const role = record.role === "ceo" || record.role === "worker" || record.role === "git" || record.role === "ops"
+  const role = record.role === "ceo" || record.role === "worker" || record.role === "git" || record.role === "ops" || record.role === "audit"
     ? record.role
     : "worker"
   return { taskId: record.task_id, agentId: record.agent_id, role, createdAt: record.created_at }
 }
 
 export function insertTaskAgent(
-  input: { taskId: string; agentId: string; role: "ceo" | "worker" | "git" | "ops" },
+  input: { taskId: string; agentId: string; role: "ceo" | "worker" | "git" | "ops" | "audit" },
   db: Database = getDb(),
 ): TaskAgentLinkRow {
   const timestamp = now()
@@ -373,7 +373,7 @@ export function insertTaskAgent(
 
 export function getTaskAgentLink(
   taskId: string,
-  role?: "ceo" | "worker" | "git" | "ops",
+  role?: "ceo" | "worker" | "git" | "ops" | "audit",
   db: Database = getDb(),
 ): TaskAgentLinkRow | null {
   const row = role === undefined
@@ -385,7 +385,7 @@ export function getTaskAgentLink(
 /** Reverse lookup for a linked task (used to tag agent events with taskId). */
 export function getTaskIdForAgent(
   agentId: string,
-  role?: "ceo" | "worker" | "git" | "ops",
+  role?: "ceo" | "worker" | "git" | "ops" | "audit",
   db: Database = getDb(),
 ): string | null {
   const row = role === undefined
@@ -882,7 +882,7 @@ export function listEvents(limit: number, db: Database = getDb()): EventRow[] {
 
 export type AgentStatus = "starting" | "running" | "stopping" | "stopped" | "error"
 export type AgentMode = "headless" | "terminal"
-export type AgentRole = "ceo" | "git" | "ops" | "worker"
+export type AgentRole = "ceo" | "git" | "ops" | "audit" | "worker"
 
 export interface AgentRow {
   id: string
@@ -922,7 +922,7 @@ interface AgentRecord {
   stop_reason: string | null
 }
 
-const AGENT_ROLES: readonly AgentRole[] = ["ceo", "git", "ops", "worker"]
+const AGENT_ROLES: readonly AgentRole[] = ["ceo", "git", "ops", "audit", "worker"]
 const AGENT_MODES: readonly AgentMode[] = ["headless", "terminal"]
 const AGENT_STATUSES: readonly AgentStatus[] = ["starting", "running", "stopping", "stopped", "error"]
 const LIVE_AGENT_STATUSES: readonly AgentStatus[] = ["starting", "running", "stopping"]
