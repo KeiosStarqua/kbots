@@ -16,7 +16,7 @@ scoop install bun rustup mingw   # once, per-user; no elevation
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-`install.ps1` requires `bun`, `cargo` and (for tags) `git` on PATH, falling back
+`install.ps1` requires `bun`, `cargo` and (for the dirty-tree check) `git` on PATH, falling back
 to Scoop's per-user cargo. It adds Scoop's MinGW `bin` to the build PATH
 (`dlltool` is needed by the windows-gnu Rust target), runs `bun install
 --frozen-lockfile` and `bun run tsc --noEmit`, builds all three Rust clients in
@@ -30,8 +30,8 @@ release mode, then:
 3. Records `repoRoot` (and optional `host`) in
    `%USERPROFILE%\.local\state\kbots\client.json`, the same file Rust clients
    read. `kbots daemon start` then works from any directory.
-4. Creates a CalVer `deploy/YYYY.MM.DD.n` tag and `.deploy-version`, like
-   `install.sh`.
+4. Records a local CalVer in `.deploy-version`, like `install.sh`; local
+   source installs never create a git tag (only `kbdeploy` does).
 5. Starts the daemon unless `-NoDaemon` is passed. `-Autostart` adds a per-user
    Startup shortcut that runs `kbots daemon start` at logon.
 
@@ -176,12 +176,11 @@ order:
      ~10s (50 × 0.2s) for the socket to appear — never fails the install if
      it does not. `Type=simple` means systemd reports the unit active before
      the daemon actually binds the socket.
-8. Tags the deployed commit with a CalVer deploy tag (`deploy/YYYY.MM.DD.n`,
-   annotated) and writes `.deploy-version`. Runs on every successful deploy,
-   including without systemd; skipped with a note when git is unavailable or
-   the repo root is not a work tree. If the working tree is dirty, the
-   recorded version gets a `+dirty` suffix and a warning is printed. See
-   "Deploy tags and versioning (SemVer + CalVer)" below.
+8. Records a local CalVer (`YYYY.MM.DD`, with `+dirty` when the working tree is
+   dirty) in `.deploy-version` on every successful install, including without
+   systemd. No git tag is created — only `kbdeploy` creates deploy tags. The
+   recorded version is what `kb status` reports. See "Versioning (SemVer +
+   local CalVer)" below.
 9. Warns if the install dir is not on `PATH`.
 
 `./install.sh` is the deploy path on non-Nix hosts: clients and the daemon
@@ -202,40 +201,38 @@ unit to override. By default the daemon also binds a secondary listener on
 or another daemon serves that path) so sandboxed agents that cannot connect
 to `/run/user/*` can reach it via the fallback.
 
-## Deploy tags and versioning (SemVer + CalVer)
+## Versioning (SemVer + local CalVer)
 
-Two tag lines coexist, because stable releases and continuous deploys have
+Two version lines coexist, because stable releases and local installs have
 different cadences:
 
 - **Stable releases — SemVer** (`vX.Y.Z`, e.g. `v0.1.0`). Created manually on
   a release commit. `DAEMON_VERSION` in `src/backend/orchestrator/system.ts`
   is the SemVer source of truth; bump it in the release commit to match the
   tag.
-- **Deploys — CalVer** (`deploy/YYYY.MM.DD.n`, e.g. `deploy/2026.11.19.1`).
-  Created automatically by `./install.sh` after every successful deploy: an
-  annotated tag on the deployed commit (`n` is the per-day deploy counter),
-  plus `.deploy-version` (untracked, gitignored) holding the same string.
-  This is for the fast, commit-often agent-development pace — every deploy
-  is traceable without cutting a release.
+- **Local installs — CalVer** (`YYYY.MM.DD`, e.g. `2026.11.26`). Recorded in
+  `.deploy-version` (untracked, gitignored) by `./install.sh` and
+  `install.ps1` after a successful install. **Local installs never create git
+  tags.** A dirty working tree adds a `+dirty` suffix.
 
-The daemon reports the deploy version in `system.status` (`kb status`):
+`kbdeploy` is the only command that creates `deploy/YYYY.MM.DD.n` tags: it
+commits the checkout, creates and pushes the tag, and switches the Nix Home
+Manager config. Those tags belong to Nix deploys, not to local installs;
+`git tag -l 'deploy/*'` shows that history.
+
+The daemon reports the deployed version in `system.status` (`kb status`):
 `.deploy-version` wins when present, then `KBOTS_DEPLOY_VERSION` (useful for
 manual runs) if set, else the SemVer `DAEMON_VERSION`. If the working tree
-was dirty at deploy time, the recorded version carries a `+dirty` suffix
-(e.g. `2026.11.19.1+dirty`) and `install.sh` prints a warning — the running
-code is then not exactly the tagged commit.
+was dirty at install time, the recorded version carries a `+dirty` suffix
+(e.g. `2026.11.26+dirty`) — the running code is then not exactly the commit.
 
-Checking what is deployed / deploy history:
+Checking what is installed:
 
 ```sh
 kb status                      # version of the running daemon
-git tag -l 'deploy/*'          # every deploy, oldest first
-git log --oneline deploy/2026.11.19.1..HEAD   # changes since that deploy
-git diff deploy/2026.11.19.1 deploy/2026.11.19.2   # what changed between two deploys
+git tag -l 'deploy/*'          # Nix deploys from kbdeploy, oldest first
 ```
 
-Deploy tags are created locally by `./install.sh` and are not pushed
-automatically; run `git push origin --tags` if you want them on the remote.
 (CI/CD and remote servers remain out of scope; this repo deploys from a
 laptop working tree.)
 

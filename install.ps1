@@ -113,24 +113,19 @@ if ($Autostart) {
     $shortcut.Save()
 }
 
-# CalVer deploy tag, same scheme as install.sh on Unix hosts. Check for .git
-# directly: redirecting native git stderr with 2>$null becomes a terminating
+# Local source installs do not create git tags; only kbdeploy does. Record a
+# CalVer locally so `kb status` still reports the installed version. Check for
+# .git directly: redirecting native git stderr with 2>$null becomes a terminating
 # NativeCommandError under $ErrorActionPreference='Stop' when this is a source
 # archive (e.g. a Scoop install) rather than a checkout.
+$date = Get-Date -Format 'yyyy.MM.dd'
+$dirty = $false
 if ($git -and (Test-Path (Join-Path $repoRoot '.git'))) {
-    $date = Get-Date -Format 'yyyy.MM.dd'
-    $n = 1
-    while (& $git -C $repoRoot rev-parse -q --verify "refs/tags/deploy/$date.$n" 2>$null) { $n++ }
-    $version = "$date.$n"
-    $dirty = & $git -C $repoRoot status --porcelain
-    & $git -C $repoRoot tag -a "deploy/$version" -m "Deploy deploy/$version"
-    if ($LASTEXITCODE -eq 0) {
-        $record = if ($dirty) { "$version+dirty" } else { $version }
-        Set-Content -Path (Join-Path $repoRoot '.deploy-version') -Encoding ASCII -Value $record
-        if ($dirty) { Write-Warning "Working tree is dirty: deployed code is not exactly tag deploy/$version." }
-        Write-Host "Tagged deploy/$version"
-    }
+    $dirty = [bool](& $git -C $repoRoot status --porcelain)
 }
+$record = if ($dirty) { "$date+dirty" } else { $date }
+Set-Content -Path (Join-Path $repoRoot '.deploy-version') -Encoding ASCII -Value $record
+Write-Host "Recorded local deploy version $record in .deploy-version"
 
 Write-Host "`nInstalled:`n  $InstallDir\kbots.exe`n  $InstallDir\kb.cmd (alias)`n  $InstallDir\kbots-tui.exe`n  $InstallDir\kbots-gui.exe"
 if (-not $NoPath -and ($env:PATH -notlike "*$InstallDir*")) {
