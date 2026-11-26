@@ -10,7 +10,7 @@
 
 ## Local Contracts
 
-- The manifest pins a `deploy/YYYY.MM.DD.n` tag that is pushed to `origin`. `version`, `url`, `hash` and `extract_dir` always move together.
+- The manifest pins a `deploy/YYYY.MM.DD.n` tag that is pushed to `origin`. `version`, `url`, `hash` and `extract_dir` always move together. The tag must contain `install.ps1` and native Windows support — older deploy tags predate both and cannot be used, even though they are valid CalVer tags.
 - `url` is the GitHub archive of that tag; `hash` is the SHA-256 of the downloaded zip; `extract_dir` is `kbots-deploy-YYYY.MM.DD.n` (the tag's slash becomes a dash in GitHub's archive root).
 - Installation delegates to `install.ps1` with `-InstallDir $dir -NoPath -NoDaemon`. Do not duplicate the Bun/Rust build logic here, and do not let the Scoop install start a daemon or create a deploy tag.
 - `depends` lists `bun`, `rustup`, `mingw` and `git`. MinGW's `bin` is added to `PATH` for `dlltool` before the build.

@@ -65,7 +65,8 @@ scoop install kbots
 `skoopub` adds the same bucket and app through `scoop.json`, so a fresh machine
 gets kbots from `scoop import scoop.json`. When bumping the manifest, update
 `version`, `url`, `hash` and `extract_dir` together from a tag that is already
-pushed to `origin`; see `bucket/AGENTS.md`.
+pushed to `origin` and contains `install.ps1` — earlier deploy tags predate the
+Windows installer and cannot be installed this way. See `bucket/AGENTS.md`.
 
 ## Nix flake (the install path on Nix-managed hosts)
 
