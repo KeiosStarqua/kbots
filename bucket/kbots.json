@@ -1,0 +1,56 @@
+{
+    "version": "2026.11.25.2",
+    "description": "Local coding workflow orchestrator with CLI, TUI and GUI clients",
+    "homepage": "https://github.com/KeiosStarqua/kbots",
+    "license": "Unknown",
+    "url": "https://github.com/KeiosStarqua/kbots/archive/refs/tags/deploy/2026.11.25.2.zip",
+    "hash": "958f1b90ff6e67e792f11340fe8f3ba13129a9c43d531b50c11c4a0180af7828",
+    "extract_dir": "kbots-deploy-2026.11.25.2",
+    "depends": [
+        "bun",
+        "rustup",
+        "mingw",
+        "git"
+    ],
+    "installer": {
+        "script": [
+            "$mingwBin = Join-Path (appdir mingw) 'current\\bin'",
+            "if (Test-Path $mingwBin) { $env:PATH = \"$mingwBin;$env:PATH\" }",
+            "powershell -NoProfile -ExecutionPolicy Bypass -File \"$dir\\install.ps1\" -InstallDir \"$dir\" -NoPath -NoDaemon",
+            "if ($LASTEXITCODE -ne 0) { throw 'kbots install.ps1 failed' }"
+        ]
+    },
+    "bin": [
+        [
+            "kbots.exe",
+            "kbots"
+        ],
+        [
+            "kbots.exe",
+            "kb"
+        ],
+        [
+            "kbots-tui.exe",
+            "kbots-tui"
+        ],
+        [
+            "kbots-gui.exe",
+            "kbots-gui"
+        ]
+    ],
+    "shortcuts": [
+        [
+            "kbots-gui.exe",
+            "kbots Control Center"
+        ]
+    ],
+    "notes": [
+        "Start the local daemon with `kbots daemon start`, then check it with `kb status`.",
+        "The source tree stays in the app directory: the daemon runs `bun run daemon` from it.",
+        "On Windows the daemon binds authenticated TCP on 127.0.0.1:7878."
+    ],
+    "##": [
+        "kbots publishes no binary release; the manifest builds from a pinned deploy tag.",
+        "Bump version, url, hash and extract_dir together when moving to a newer tag."
+    ]
+}

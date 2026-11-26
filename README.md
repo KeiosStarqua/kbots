@@ -48,6 +48,20 @@ repo root for the background daemon, adds a Start Menu shortcut, and starts the
 daemon. `-NoDaemon`, `-NoPath`, `-Autostart` and `-InstallDir PATH` adjust those
 steps. Nothing writes to system directories or needs elevation.
 
+Alternatively, install with Scoop from the personal bucket:
+
+```powershell
+scoop bucket add kbots https://github.com/KeiosStarqua/kbots
+scoop install kbots
+```
+
+The manifest builds from a pinned `deploy/YYYY.MM.DD.n` source tag, so `bun`,
+`rustup`, `mingw` and `git` must be installed (all are in Scoop's `main` bucket).
+It installs the `kbots`, `kb`, `kbots-tui` and `kbots-gui` shims and a Start Menu
+shortcut, but intentionally does not start the daemon — run
+`kbots daemon start` first. This is the same package `skoopub` installs through
+`scoop import scoop.json`.
+
 Windows clients and the daemon speak authenticated TCP on `127.0.0.1:7878`
 (the port is configurable with `--tcp HOST:PORT` on the daemon and `--host` on
 clients). To control an existing Linux daemon over Tailscale instead of running

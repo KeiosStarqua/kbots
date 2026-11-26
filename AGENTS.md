@@ -95,6 +95,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - Keep backend modules separated by responsibility: `cli/`, `opencode/`, `orchestrator/`, `bots/`, `workflows/`, `adapters/`, and `db/` under `src/backend/`.
 - Keep client-shared IPC in `ipc/` (Rust crate `kbots-ipc`): Unix sockets on Unix, authenticated TCP on Windows/remote. CLI, TUI, and GUI use it for daemon discovery and token auth; never reimplement transport in a client.
 - The Rust CLI directory is `cli/` (package `kbots-cli`, binary `kbots`, alias `kb`). The GUI lives in `gui/`, not `gui/control-center/`.
+- `bucket/` is a personal Scoop bucket. `bucket/kbots.json` installs kbots from a pinned, pushed `deploy/YYYY.MM.DD.n` source tag by calling `install.ps1`; it publishes no binary release.
 
 ### Local Contracts
 
@@ -125,6 +126,7 @@ When the user requests a durable behavior change, record it here or in the relev
 - Use `bun run control --list-sessions` for read-only service verification.
 - `nix build .#` is the packaging check (all four binaries, `kbdeploy`, desktop entry, `kb` alias); `nix develop` provides the Bun/Rust/Slint toolchain.
 - `kbdeploy "what changed"` is the one deploy command on Nix-managed hosts; `./install.sh` on Unix hosts and `powershell -ExecutionPolicy Bypass -File .\install.ps1` on Windows are the one-command deploys elsewhere.
+- For the Scoop bucket, verify a fresh `scoop install kbots/kbots`, then `kbots daemon start` and `kb status`.
 
 ### Architecture Principles
 
@@ -184,5 +186,6 @@ Whenever an agent works on a task, it keeps the task's issue on the repo's issue
 - `cli/AGENTS.md`: Rust automation CLI (`kbots`, alias `kb`) — thin daemon client, local project configuration, and daemon process lifecycle.
 - `gui/AGENTS.md`: Slint native desktop operator-control client (shared IPC transport).
 - `tui/AGENTS.md`: Ratatui/Crossterm native terminal client (`tui/control-center/`, shared IPC transport).
+- `bucket/AGENTS.md`: personal Scoop bucket — pinned source-tag manifest, version/hash bump rules, Windows install verification.
 
 Reference material (not DOX children): `ARCHITECTURE.md` (system shape, implemented vs planned), `docs/opencode-control.md` (embedded SDK setup, service client, provider behavior, session commands), `docs/opencode-token-speed.md` (read-only measurement of tok/s, TTFT and build time from OpenCode's local SQLite DB), `docs/kbots-ipc.md` (local JSON-RPC protocol for the daemon clients), `docs/deployment.md` (deploy tags, daemon service), `docs/plans/` (design plans). Module-level detail lives in each backend folder's `README.md`, `cli/README.md`, `gui/README.md`, and `tui/README.md`.
