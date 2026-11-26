@@ -1,11 +1,11 @@
 {
-    "version": "2026.11.26.4",
+    "version": "2026.11.26.5",
     "description": "Local coding workflow orchestrator with CLI, TUI and GUI clients",
     "homepage": "https://github.com/KeiosStarqua/kbots",
     "license": "Unknown",
-    "url": "https://github.com/KeiosStarqua/kbots/archive/cbdc23bf627949181d0e7a34b50864c3ffd1e260.zip",
-    "hash": "3b25304bff39c296f9e865560794cc50215874b1b00774f874bfa22ad9e57f18",
-    "extract_dir": "kbots-cbdc23bf627949181d0e7a34b50864c3ffd1e260",
+    "url": "https://github.com/KeiosStarqua/kbots/archive/a70c7fa236d94f7cd87e90bf3447302fc8d1e700.zip",
+    "hash": "e9d1d8cc9aaebf6e0d9e3cf33b0ee8c919c63956d70c862da3e1fe28f5fe84ae",
+    "extract_dir": "kbots-a70c7fa236d94f7cd87e90bf3447302fc8d1e700",
     "depends": [
         "bun",
         "rustup",
