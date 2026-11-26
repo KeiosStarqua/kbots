@@ -15,6 +15,7 @@
 - Installation delegates to `install.ps1` with `-InstallDir $dir -NoPath -NoDaemon`. Do not duplicate the Bun/Rust build logic here, and do not let the Scoop install start a daemon or create a deploy tag.
 - `depends` lists `bun`, `rustup`, `mingw` and `git`. MinGW's `bin` is added to `PATH` for `dlltool` before the build.
 - The installer forces `RUSTUP_TOOLCHAIN=stable-x86_64-pc-windows-gnu` (installing that toolchain if missing) without changing the user's global default. An MSVC-only toolchain cannot link the GUI/Slint build because `link.exe` is not installed.
+- The pinned tag's `install.ps1` must tolerate a source archive with no `.git`: with `$ErrorActionPreference='Stop'`, redirecting native git stderr to `$null` throws in Windows PowerShell 5.1, so the deploy-tag step checks `Test-Path .git` instead.
 - Shims: `kbots`, `kb` (alias of `kbots.exe`), `kbots-tui`, `kbots-gui`; Start Menu shortcut `kbots Control Center`.
 
 ## Work Guidance
