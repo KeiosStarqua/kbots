@@ -17,19 +17,21 @@ export const DAEMON_NAME = "kbots-daemon"
 // .deploy-version); the daemon reports that instead when one is recorded.
 export const DAEMON_VERSION = "0.1.0"
 
-// Resolve the deploy version recorded by the last ./install.sh run. The
-// systemd unit runs from the repo root, so resolve relative to this file
-// instead of the cwd. KBOTS_DEPLOY_VERSION (e.g. for manual runs) wins over
-// the file. Falls back to the SemVer constant when nothing was recorded.
+// Resolve the deploy version recorded by the last local install.
+// KBOTS_DEPLOY_VERSION (e.g. for manual runs) wins over the file. The file
+// lives at the repo root; on Windows `bun run` uses a temporary runtime where
+// import.meta.dir is the cwd, so try that path as well as the source-relative
+// one (which is what the systemd unit and plain `bun` use).
 function deployedVersion(): string {
   const env = process.env.KBOTS_DEPLOY_VERSION?.trim()
   if (env) return env
-  try {
-    const repoRoot = join(import.meta.dir, "..", "..", "..")
-    const text = readFileSync(join(repoRoot, ".deploy-version"), "utf8").trim()
-    if (text) return text
-  } catch {
-    // no recorded deploy version — fall back to the SemVer constant
+  for (const root of [join(import.meta.dir, "..", "..", ".."), process.cwd()]) {
+    try {
+      const text = readFileSync(join(root, ".deploy-version"), "utf8").trim()
+      if (text) return text
+    } catch {
+      // try the next candidate
+    }
   }
   return DAEMON_VERSION
 }
