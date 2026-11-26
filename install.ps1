@@ -113,8 +113,11 @@ if ($Autostart) {
     $shortcut.Save()
 }
 
-# CalVer deploy tag, same scheme as install.sh on Unix hosts.
-if ($git -and (& $git -C $repoRoot rev-parse --is-inside-work-tree 2>$null) -eq 'true') {
+# CalVer deploy tag, same scheme as install.sh on Unix hosts. Check for .git
+# directly: redirecting native git stderr with 2>$null becomes a terminating
+# NativeCommandError under $ErrorActionPreference='Stop' when this is a source
+# archive (e.g. a Scoop install) rather than a checkout.
+if ($git -and (Test-Path (Join-Path $repoRoot '.git'))) {
     $date = Get-Date -Format 'yyyy.MM.dd'
     $n = 1
     while (& $git -C $repoRoot rev-parse -q --verify "refs/tags/deploy/$date.$n" 2>$null) { $n++ }
